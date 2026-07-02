@@ -13,6 +13,12 @@ use RoboJackSparrow\Admin\Menu\QueuePage;
 use RoboJackSparrow\Admin\Menu\SettingsPage;
 use RoboJackSparrow\Admin\Menu\SourcesPage;
 use RoboJackSparrow\Ai\HealthMonitor;
+use RoboJackSparrow\Api\Controllers\ArticleController;
+use RoboJackSparrow\Api\Controllers\LogController;
+use RoboJackSparrow\Api\Controllers\QueueController;
+use RoboJackSparrow\Api\Controllers\SettingsController;
+use RoboJackSparrow\Api\Controllers\SourceController;
+use RoboJackSparrow\Api\RestApi;
 use RoboJackSparrow\Cron\CronManager;
 use RoboJackSparrow\Database\Repositories\ArticleRepository;
 use RoboJackSparrow\Database\Repositories\LogRepository;
@@ -31,6 +37,7 @@ final class Plugin
     private QueueManager $queueManager;
     private Worker $worker;
     private CronManager $cronManager;
+    private RestApi $restApi;
     private ?Admin $admin = null;
 
     public static function instance(): self
@@ -48,6 +55,7 @@ final class Plugin
         $this->queueManager = new QueueManager($this->logger);
         $this->worker = new Worker($this->queueManager, $this->logger);
         $this->cronManager = new CronManager();
+        $this->restApi = $this->buildRestApi();
 
         $this->registerHooks();
 
@@ -55,6 +63,23 @@ final class Plugin
             $this->admin = $this->buildAdmin();
             $this->admin->register();
         }
+    }
+
+    /**
+     * REST routes must be registered regardless of is_admin() - REST API
+     * requests are not considered "admin" context by WordPress.
+     */
+    private function buildRestApi(): RestApi
+    {
+        $settings = new SettingRepository(new Encryption());
+
+        return new RestApi(
+            new ArticleController(new ArticleRepository()),
+            new QueueController(new QueueRepositoryModel()),
+            new SettingsController($settings),
+            new LogController(new LogRepository()),
+            new SourceController(new SourceRepository())
+        );
     }
 
     private function buildAdmin(): Admin
@@ -80,9 +105,15 @@ final class Plugin
     private function registerHooks(): void
     {
         $this->cronManager->register();
+        $this->restApi->register();
 
         add_action('rjs_worker_process', [$this->worker, 'processNextBatch']);
         add_action('init', [$this, 'loadTextdomain']);
+    }
+
+    public function getRestApi(): RestApi
+    {
+        return $this->restApi;
     }
 
     public function loadTextdomain(): void

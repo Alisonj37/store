@@ -75,6 +75,24 @@ class SettingRepository
     }
 
     /**
+     * Whether a key is flagged sensitive (or already stored as such).
+     * Unknown keys ending in "_api_key" are treated as sensitive by
+     * convention even before their first save.
+     */
+    public function isSensitive(string $key): bool
+    {
+        $row = $this->db->get_row(
+            $this->db->prepare("SELECT is_sensitive FROM {$this->table} WHERE setting_key = %s", $key)
+        );
+
+        if ($row !== null) {
+            return (int) $row->is_sensitive === 1;
+        }
+
+        return str_ends_with($key, '_api_key');
+    }
+
+    /**
      * Masked preview safe to display in the admin UI without exposing the
      * full secret (e.g. "sk-1...ab9f"). Null when unset.
      */

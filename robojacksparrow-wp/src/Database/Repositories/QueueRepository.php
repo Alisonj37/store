@@ -42,6 +42,15 @@ class QueueRepository
         return is_array($rows) ? $rows : [];
     }
 
+    public function find(int $id): ?object
+    {
+        $row = $this->db->get_row(
+            $this->db->prepare("SELECT * FROM {$this->table} WHERE id = %d", $id)
+        );
+
+        return $row instanceof \stdClass ? $row : null;
+    }
+
     public function count(?string $status = null): int
     {
         if ($status !== null) {
