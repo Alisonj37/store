@@ -4,7 +4,21 @@ declare(strict_types=1);
 
 namespace RoboJackSparrow\Core;
 
+use RoboJackSparrow\Admin\Admin;
+use RoboJackSparrow\Admin\Menu\ApiKeysPage;
+use RoboJackSparrow\Admin\Menu\ArticlesPage;
+use RoboJackSparrow\Admin\Menu\DashboardPage;
+use RoboJackSparrow\Admin\Menu\LogsPage;
+use RoboJackSparrow\Admin\Menu\QueuePage;
+use RoboJackSparrow\Admin\Menu\SettingsPage;
+use RoboJackSparrow\Admin\Menu\SourcesPage;
+use RoboJackSparrow\Ai\HealthMonitor;
 use RoboJackSparrow\Cron\CronManager;
+use RoboJackSparrow\Database\Repositories\ArticleRepository;
+use RoboJackSparrow\Database\Repositories\LogRepository;
+use RoboJackSparrow\Database\Repositories\QueueRepository as QueueRepositoryModel;
+use RoboJackSparrow\Database\Repositories\SettingRepository;
+use RoboJackSparrow\Database\Repositories\SourceRepository;
 use RoboJackSparrow\Database\Schema;
 use RoboJackSparrow\Queue\QueueManager;
 use RoboJackSparrow\Queue\Worker;
@@ -17,6 +31,7 @@ final class Plugin
     private QueueManager $queueManager;
     private Worker $worker;
     private CronManager $cronManager;
+    private ?Admin $admin = null;
 
     public static function instance(): self
     {
@@ -35,6 +50,31 @@ final class Plugin
         $this->cronManager = new CronManager();
 
         $this->registerHooks();
+
+        if (is_admin()) {
+            $this->admin = $this->buildAdmin();
+            $this->admin->register();
+        }
+    }
+
+    private function buildAdmin(): Admin
+    {
+        $settings = new SettingRepository(new Encryption());
+        $articles = new ArticleRepository();
+        $queue = new QueueRepositoryModel();
+        $logs = new LogRepository();
+        $sources = new SourceRepository();
+        $health = new HealthMonitor();
+
+        return new Admin(
+            new DashboardPage($articles, $queue, $logs, $health),
+            new ArticlesPage($articles),
+            new QueuePage($queue),
+            new SourcesPage($sources),
+            new LogsPage($logs),
+            new SettingsPage($settings),
+            new ApiKeysPage($settings)
+        );
     }
 
     private function registerHooks(): void
