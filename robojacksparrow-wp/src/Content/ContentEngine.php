@@ -40,12 +40,19 @@ class ContentEngine
     ) {
     }
 
-    public function generate(int $articleId, ScrapedContent $source, ResearchData $research): GeneratedContent
+    /**
+     * @param ?string $preferredProvider Article-level override (e.g. the
+     *     'assigned_llm' column, when not 'auto'). Wins over the global
+     *     'rjs_preferred_llm_provider' setting; both are only a hint to the
+     *     LLMRouter, which still fails over to another provider if needed.
+     */
+    public function generate(int $articleId, ScrapedContent $source, ResearchData $research, ?string $preferredProvider = null): GeneratedContent
     {
         $contextKey = "article_{$articleId}";
         $this->memory->clear($contextKey);
 
         $briefing = $research->toBriefing();
+        $provider = $this->resolvePreferredProvider($preferredProvider);
 
         // === ETAPA 1: OUTLINE ===
         $this->logger->info('Starting outline generation', ['article_id' => $articleId]);
@@ -61,7 +68,8 @@ class ContentEngine
             ]),
             isJsonMode: true,
             maxTokens: 2048,
-            temperature: 0.7
+            temperature: 0.7,
+            preferredProvider: $provider
         ));
 
         $outline = $this->outlineGenerator->parse($outlineResponse->getContent());
@@ -75,7 +83,7 @@ class ContentEngine
 
         $sections = [];
         foreach ($outline->getSections() as $index => $section) {
-            $generated = $this->generateSection($contextKey, $source, $outline, $section, $index, $briefing);
+            $generated = $this->generateSection($contextKey, $source, $outline, $section, $index, $briefing, $provider);
             $sections[] = $generated;
             $totalTokens += $generated['tokens'];
         }
@@ -84,7 +92,7 @@ class ContentEngine
 
         // === ETAPA 3: FAQ ===
         $this->logger->info('Starting FAQ extraction', ['article_id' => $articleId]);
-        $faqs = $this->faq->extract($fullContent);
+        $faqs = $this->faq->extract($fullContent, $provider);
         $totalTokens += $this->faq->getLastTokensUsed();
 
         // === ETAPA 4: SEO ===
@@ -93,7 +101,7 @@ class ContentEngine
 
         return new GeneratedContent(
             title: $outline->getTitle(),
-            htmlContent: $this->assembleHtml($sections, $faqs),
+            htmlContent: $this->appendSourcesBlock($this->assembleHtml($sections, $faqs), $research),
             seoTitle: $seoData->getTitle(),
             seoDescription: $seoData->getDescription(),
             schemaArticle: $seoData->getArticleSchema(),
@@ -116,7 +124,8 @@ class ContentEngine
         Outline $outline,
         array $section,
         int $index,
-        string $briefing
+        string $briefing,
+        ?string $preferredProvider = null
     ): array {
         $memory = $this->memory->getContext($contextKey);
 
@@ -132,7 +141,8 @@ class ContentEngine
             ]),
             contextMemory: $memory,
             maxTokens: 2048,
-            temperature: 0.7
+            temperature: 0.7,
+            preferredProvider: $preferredProvider
         ));
 
         // Store as a (user, assistant) pair, not just the assistant reply:
@@ -186,8 +196,50 @@ class ContentEngine
         return $html;
     }
 
+    /**
+     * External citations, linked to the verified research sources (Tavily,
+     * Fase 3). Answer engines (AEO/GEO) weigh cited, checkable sources when
+     * deciding whether to surface/quote a page, so this is skipped only
+     * when there is genuinely nothing to cite (fallback research).
+     */
+    private function appendSourcesBlock(string $html, ResearchData $research): string
+    {
+        $items = '';
+
+        foreach ($research->getSources() as $source) {
+            $url = trim($source->getUrl());
+            if ($url === '') {
+                continue;
+            }
+
+            $label = trim($source->getTitle()) !== '' ? $source->getTitle() : $url;
+            $items .= sprintf(
+                "<li><a href=\"%s\" target=\"_blank\" rel=\"noopener noreferrer\">%s</a></li>\n",
+                esc_url($url),
+                esc_html($label)
+            );
+        }
+
+        if ($items === '') {
+            return $html;
+        }
+
+        return $html . "\n\n<h2>Fontes</h2>\n<ul>\n{$items}</ul>\n";
+    }
+
     private function briefingOrFallback(string $briefing): string
     {
         return $briefing !== '' ? $briefing : 'Nenhuma pesquisa adicional disponivel; use apenas o conteudo fonte.';
+    }
+
+    private function resolvePreferredProvider(?string $override): ?string
+    {
+        if ($override !== null && trim($override) !== '') {
+            return $override;
+        }
+
+        $global = trim((string) $this->settings->get('rjs_preferred_llm_provider', ''));
+
+        return $global !== '' ? $global : null;
     }
 }

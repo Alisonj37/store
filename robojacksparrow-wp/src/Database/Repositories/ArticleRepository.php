@@ -93,6 +93,42 @@ class ArticleRepository
     }
 
     /**
+     * Other already-published articles used as internal linking candidates
+     * for a newly generated one. Prefers the same category when available,
+     * falling back to the most recent published articles overall.
+     *
+     * @return object[]
+     */
+    public function findRelatedPublished(int $excludeArticleId, ?string $categoryName, int $limit = 3): array
+    {
+        if ($categoryName !== null && trim($categoryName) !== '') {
+            $rows = $this->db->get_results($this->db->prepare(
+                "SELECT id, source_title, wordpress_post_url FROM {$this->table}
+                 WHERE status = 'published' AND wordpress_post_url IS NOT NULL
+                 AND id != %d AND category_name = %s
+                 ORDER BY created_at DESC LIMIT %d",
+                $excludeArticleId,
+                $categoryName,
+                $limit
+            ));
+
+            if (is_array($rows) && $rows !== []) {
+                return $rows;
+            }
+        }
+
+        $rows = $this->db->get_results($this->db->prepare(
+            "SELECT id, source_title, wordpress_post_url FROM {$this->table}
+             WHERE status = 'published' AND wordpress_post_url IS NOT NULL AND id != %d
+             ORDER BY created_at DESC LIMIT %d",
+            $excludeArticleId,
+            $limit
+        ));
+
+        return is_array($rows) ? $rows : [];
+    }
+
+    /**
      * @return array<string, int>
      */
     public function countByStatus(): array

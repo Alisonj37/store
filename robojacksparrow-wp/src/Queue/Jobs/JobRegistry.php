@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace RoboJackSparrow\Queue\Jobs;
 
+use DateTimeImmutable;
 use RoboJackSparrow\Content\ContentEngine;
+use RoboJackSparrow\Content\Linking\LinkInjector;
 use RoboJackSparrow\Core\Logger;
 use RoboJackSparrow\Database\Repositories\ArticleRepository;
 use RoboJackSparrow\Image\Dto\ImageAttribution;
@@ -75,6 +77,11 @@ class JobRegistry
 
     public function handleGenerateContent(mixed $handled, Job $job): bool
     {
+        $article = $this->articles->find($job->getArticleId());
+        if ($article === null) {
+            throw new JobHandlerException("Article {$job->getArticleId()} not found for generate_content job");
+        }
+
         $payload = $job->getPayload();
 
         $source = new ScrapedContent(
@@ -85,7 +92,15 @@ class JobRegistry
         );
 
         $researchData = $this->research->enrich($source);
-        $generated = $this->content->generate($job->getArticleId(), $source, $researchData);
+        $generated = $this->content->generate(
+            $job->getArticleId(),
+            $source,
+            $researchData,
+            $this->articleOverride($article->assigned_llm ?? null)
+        );
+
+        $relatedArticles = $this->articles->findRelatedPublished($job->getArticleId(), $article->category_name ?? null);
+        $htmlContent = (new LinkInjector())->appendInternalLinks($generated->getHtmlContent(), $relatedArticles);
 
         $this->articles->update($job->getArticleId(), [
             // No dedicated "generated title" column exists on the articles
@@ -94,7 +109,7 @@ class JobRegistry
             // the *original* scraped title passed into generate() above),
             // since it is what handlePublish() uses as the WP post title.
             'source_title'        => $generated->getTitle(),
-            'generated_content'   => $generated->getHtmlContent(),
+            'generated_content'   => $htmlContent,
             'seo_title'           => $generated->getSeoTitle(),
             'seo_description'     => $generated->getSeoDescription(),
             'seo_schema'          => wp_json_encode($generated->getSchemaArticle()),
@@ -114,6 +129,11 @@ class JobRegistry
 
     public function handleGenerateImage(mixed $handled, Job $job): bool
     {
+        $article = $this->articles->find($job->getArticleId());
+        if ($article === null) {
+            throw new JobHandlerException("Article {$job->getArticleId()} not found for generate_image job");
+        }
+
         $payload = $job->getPayload();
         $prompt = trim((string) ($payload['image_prompt'] ?? ''));
 
@@ -126,7 +146,10 @@ class JobRegistry
             return true;
         }
 
-        $result = $this->image->generate(new ImageRequest($prompt));
+        $result = $this->image->generate(
+            new ImageRequest($prompt),
+            $this->articleOverride($article->assigned_image_source ?? null)
+        );
 
         $this->articles->update($job->getArticleId(), ['status' => 'queued_publish']);
         $this->queue->enqueue($job->getArticleId(), 'publish', [
@@ -148,6 +171,16 @@ class JobRegistry
             throw new JobHandlerException("Article {$job->getArticleId()} not found for publish job");
         }
 
+        $postStatus = (string) ($article->target_post_status ?? 'publish');
+        $scheduledAt = $postStatus === 'future' ? $this->parseScheduledAt($article->scheduled_at ?? null) : null;
+
+        // A 'future' status with no parseable date can never actually
+        // publish through wp_insert_post; fall back to a draft rather than
+        // silently losing the article in scheduling limbo.
+        if ($postStatus === 'future' && $scheduledAt === null) {
+            $postStatus = 'draft';
+        }
+
         $request = new PublishRequest(
             title: (string) $article->source_title,
             htmlContent: (string) $article->generated_content,
@@ -160,7 +193,8 @@ class JobRegistry
             categoryName: $article->category_name ?? null,
             featuredImage: $this->buildFeaturedImage($job->getPayload()),
             postType: (string) ($article->custom_post_type ?? 'post'),
-            postStatus: 'publish'
+            postStatus: $postStatus,
+            scheduledAt: $scheduledAt
         );
 
         $result = $this->publisher->publish($request);
@@ -174,6 +208,17 @@ class JobRegistry
         ]);
 
         return true;
+    }
+
+    private function parseScheduledAt(?string $value): ?DateTimeImmutable
+    {
+        if ($value === null || trim($value) === '') {
+            return null;
+        }
+
+        $parsed = DateTimeImmutable::createFromFormat('Y-m-d H:i:s', $value);
+
+        return $parsed !== false ? $parsed : null;
     }
 
     private function buildFeaturedImage(array $payload): ?ImageResult
@@ -199,6 +244,18 @@ class JobRegistry
             ),
             sourceUrl: $payload['image_source_url'] ?? null
         );
+    }
+
+    /**
+     * assigned_llm/assigned_image_source default to 'auto' on the articles
+     * table, meaning "no article-level preference"; translate that (and
+     * empty/null) into null so the engines fall back to the global setting.
+     */
+    private function articleOverride(?string $value): ?string
+    {
+        $value = trim((string) $value);
+
+        return ($value === '' || $value === 'auto') ? null : $value;
     }
 
     private function decodeJsonColumn(?string $json): array

@@ -8,6 +8,7 @@ use RoboJackSparrow\Admin\Admin;
 use RoboJackSparrow\Admin\Menu\ApiKeysPage;
 use RoboJackSparrow\Admin\Menu\ArticlesPage;
 use RoboJackSparrow\Admin\Menu\DashboardPage;
+use RoboJackSparrow\Admin\Menu\GenerateArticlePage;
 use RoboJackSparrow\Admin\Menu\LogsPage;
 use RoboJackSparrow\Admin\Menu\QueuePage;
 use RoboJackSparrow\Admin\Menu\SettingsPage;
@@ -98,6 +99,7 @@ final class Plugin
             new RssParser(),
             new ArticleRepository(),
             $this->queueManager,
+            $settings,
             $this->logger
         );
 
@@ -134,7 +136,8 @@ final class Plugin
 
         return new Admin(
             new DashboardPage($articles, $queue, $logs, $health),
-            new ArticlesPage($articles),
+            new ArticlesPage($articles, $this->queueManager),
+            new GenerateArticlePage($articles, $this->queueManager),
             new QueuePage($queue),
             new SourcesPage($sources),
             new LogsPage($logs),
@@ -153,11 +156,11 @@ final class Plugin
         $health = new HealthMonitor();
 
         $llmProviders = [
-            'openai'    => new OpenAIProvider((string) $settings->get('rjs_openai_api_key', '')),
-            'anthropic' => new AnthropicProvider((string) $settings->get('rjs_anthropic_api_key', '')),
-            'groq'      => new GroqProvider((string) $settings->get('rjs_groq_api_key', '')),
-            'gemini'    => new GeminiProvider((string) $settings->get('rjs_gemini_api_key', '')),
-            'deepseek'  => new DeepSeekProvider((string) $settings->get('rjs_deepseek_api_key', '')),
+            'openai'    => new OpenAIProvider((string) $settings->get('rjs_openai_api_key', ''), $this->nullableModel($settings, 'rjs_openai_model')),
+            'anthropic' => new AnthropicProvider((string) $settings->get('rjs_anthropic_api_key', ''), $this->nullableModel($settings, 'rjs_anthropic_model')),
+            'groq'      => new GroqProvider((string) $settings->get('rjs_groq_api_key', ''), $this->nullableModel($settings, 'rjs_groq_model')),
+            'gemini'    => new GeminiProvider((string) $settings->get('rjs_gemini_api_key', ''), $this->nullableModel($settings, 'rjs_gemini_model')),
+            'deepseek'  => new DeepSeekProvider((string) $settings->get('rjs_deepseek_api_key', ''), $this->nullableModel($settings, 'rjs_deepseek_model')),
         ];
         $llmRouter = new LLMRouter($llmProviders, $health, $this->logger);
 
@@ -195,7 +198,7 @@ final class Plugin
             new PexelsProvider((string) $settings->get('rjs_pexels_api_key', '')),
             new PixabayProvider((string) $settings->get('rjs_pixabay_api_key', '')),
         ];
-        $imageEngine = new ImageEngine($imageProviders, $this->logger);
+        $imageEngine = new ImageEngine($imageProviders, $this->logger, $settings);
 
         $postPublisher = new PostPublisher(
             new TaxonomyManager(),
@@ -214,6 +217,19 @@ final class Plugin
             $postPublisher,
             $this->logger
         );
+    }
+
+    /**
+     * Admin-configured model override (e.g. rjs_openai_model), or null to
+     * let the provider fall back to its own hardcoded default. Free text
+     * rather than a fixed dropdown - provider model identifiers change too
+     * often to hardcode a verified list here.
+     */
+    private function nullableModel(SettingRepository $settings, string $key): ?string
+    {
+        $value = trim((string) $settings->get($key, ''));
+
+        return $value !== '' ? $value : null;
     }
 
     private function registerHooks(): void

@@ -116,6 +116,179 @@ final class JobRegistryTest extends TestCase
         $this->assertSame(['completed', 'completed', 'completed', 'completed'], $statuses);
     }
 
+    public function testArticleLevelProviderOverridesAreHonoredForContentAndImage(): void
+    {
+        $this->wpdb->articles[1] = [
+            'id'                    => 1,
+            'source_type'           => 'scraper',
+            'source_url'            => 'https://example.com/original-article',
+            'status'                => 'pending',
+            'priority'              => 5,
+            'assigned_llm'          => 'preferred-llm',
+            'assigned_image_source' => 'preferred-image',
+            'created_at'            => '2026-01-01 00:00:00',
+        ];
+
+        $articles = new ArticleRepository();
+        $queue = new QueueManager(new Logger());
+        $logger = new Logger();
+
+        $scraper = new ScraperEngine([new FakeScraper()], $logger);
+        $research = new ResearchEngine(new TavilyDriver(''), $logger);
+        $settings = new SettingRepository(new Encryption(), $logger);
+
+        // Two providers: only the one matching the article's assigned_llm
+        // should ever be called, proving the override reaches the router.
+        $decoyLlm = new RefusingLlmProvider('decoy-llm');
+        $preferredLlm = new FakeLlmProvider('preferred-llm');
+        $llmRouter = new LLMRouter(['decoy-llm' => $decoyLlm, 'preferred-llm' => $preferredLlm], new HealthMonitor(), $logger);
+        $prompts = new PromptLibrary();
+        $content = new ContentEngine(
+            $llmRouter,
+            new MemoryBuffer(new MemoryStore()),
+            new SeoGenerator(),
+            new FaqExtractor($llmRouter, $prompts),
+            new OutlineGenerator(),
+            $prompts,
+            $settings,
+            $logger
+        );
+
+        $decoyImage = new RefusingImageProvider('decoy-image');
+        $preferredImage = new FakeImageProvider('preferred-image');
+        $image = new ImageEngine([$decoyImage, $preferredImage], $logger);
+
+        $publisher = new PostPublisher(new TaxonomyManager(), new MediaUploader(), new SeoIntegrator(), $logger);
+
+        $registry = new JobRegistry($articles, $queue, $scraper, $research, $content, $image, $publisher, $logger);
+        $registry->register();
+
+        $queue->enqueue(1, 'scrape');
+        $worker = new Worker($queue, $logger, batchSize: 1);
+        for ($i = 0; $i < 4; $i++) {
+            $worker->processNextBatch();
+        }
+
+        $article = $articles->find(1);
+        $this->assertSame('published', $article->status);
+        $this->assertSame(0, $decoyLlm->calls, 'decoy LLM must never be invoked when assigned_llm overrides routing');
+        $this->assertSame(0, $decoyImage->calls, 'decoy image provider must never be invoked when assigned_image_source overrides ordering');
+    }
+
+    public function testHandleGenerateContentInjectsInternalLinksToOtherPublishedArticles(): void
+    {
+        $this->wpdb->articles[1] = [
+            'id' => 1, 'source_type' => 'scraper', 'source_url' => 'https://example.com/original-article',
+            'status' => 'pending', 'priority' => 5, 'created_at' => '2026-01-01 00:00:00',
+        ];
+        // An unrelated article already published on the site - a valid
+        // internal-linking candidate since findRelatedPublished() falls
+        // back to any published article when the new one has no category.
+        $this->wpdb->articles[900] = [
+            'id' => 900, 'status' => 'published', 'wordpress_post_url' => 'https://example.test/?p=900',
+            'source_title' => 'Artigo Relacionado Publicado', 'created_at' => '2025-12-01 00:00:00',
+        ];
+
+        $articles = new ArticleRepository();
+        $logger = new Logger();
+        $settings = new SettingRepository(new Encryption(), $logger);
+        $prompts = new PromptLibrary();
+        $llmRouter = new LLMRouter(['test' => new FakeLlmProvider()], new HealthMonitor(), $logger);
+        $content = new ContentEngine($llmRouter, new MemoryBuffer(new MemoryStore()), new SeoGenerator(), new FaqExtractor($llmRouter, $prompts), new OutlineGenerator(), $prompts, $settings, $logger);
+
+        $registry = new JobRegistry(
+            $articles,
+            new QueueManager($logger),
+            new ScraperEngine([], $logger),
+            new ResearchEngine(null, $logger),
+            $content,
+            new ImageEngine([], $logger),
+            new PostPublisher(new TaxonomyManager(), new MediaUploader(), new SeoIntegrator(), $logger),
+            $logger
+        );
+
+        $registry->handleGenerateContent(null, \RoboJackSparrow\Queue\Job::fromRow((object) [
+            'id' => 1, 'article_id' => 1, 'job_type' => 'generate_content',
+            'job_payload' => json_encode(['scraped_url' => 'https://example.com/original-article', 'scraped_title' => 'Original', 'scraped_text' => 'Texto original.']),
+            'attempts' => 0, 'max_attempts' => 3, 'status' => 'processing',
+        ]));
+
+        $article = $articles->find(1);
+        $this->assertStringContainsString('<h2>Leia tambem</h2>', $article->generated_content);
+        $this->assertStringContainsString('<a href="https://example.test/?p=900">Artigo Relacionado Publicado</a>', $article->generated_content);
+    }
+
+    private function makeRegistryForPublishOnly(ArticleRepository $articles): JobRegistry
+    {
+        $logger = new Logger();
+        $settings = new SettingRepository(new Encryption(), $logger);
+        $prompts = new PromptLibrary();
+        $llmRouter = new LLMRouter([], new HealthMonitor(), $logger);
+
+        return new JobRegistry(
+            $articles,
+            new QueueManager($logger),
+            new ScraperEngine([], $logger),
+            new ResearchEngine(null, $logger),
+            new ContentEngine($llmRouter, new MemoryBuffer(new MemoryStore()), new SeoGenerator(), new FaqExtractor($llmRouter, $prompts), new OutlineGenerator(), $prompts, $settings, $logger),
+            new ImageEngine([], $logger),
+            new PostPublisher(new TaxonomyManager(), new MediaUploader(), new SeoIntegrator(), $logger),
+            $logger
+        );
+    }
+
+    public function testHandlePublishUsesDraftStatusFromArticleOverride(): void
+    {
+        $this->wpdb->articles[1] = [
+            'id' => 1, 'source_title' => 'Titulo', 'generated_content' => '<p>Conteudo</p>',
+            'target_post_status' => 'draft', 'created_at' => '2026-01-01 00:00:00',
+        ];
+        $articles = new ArticleRepository();
+        $registry = $this->makeRegistryForPublishOnly($articles);
+
+        $registry->handlePublish(null, \RoboJackSparrow\Queue\Job::fromRow((object) [
+            'id' => 1, 'article_id' => 1, 'job_type' => 'publish', 'job_payload' => '{}', 'attempts' => 0, 'max_attempts' => 3, 'status' => 'processing',
+        ]));
+
+        $postId = $articles->find(1)->wordpress_post_id;
+        $this->assertSame('draft', $this->wpdb->posts[$postId]['post_status']);
+    }
+
+    public function testHandlePublishSchedulesFutureArticleWithScheduledAt(): void
+    {
+        $this->wpdb->articles[1] = [
+            'id' => 1, 'source_title' => 'Titulo', 'generated_content' => '<p>Conteudo</p>',
+            'target_post_status' => 'future', 'scheduled_at' => '2026-08-15 10:00:00', 'created_at' => '2026-01-01 00:00:00',
+        ];
+        $articles = new ArticleRepository();
+        $registry = $this->makeRegistryForPublishOnly($articles);
+
+        $registry->handlePublish(null, \RoboJackSparrow\Queue\Job::fromRow((object) [
+            'id' => 1, 'article_id' => 1, 'job_type' => 'publish', 'job_payload' => '{}', 'attempts' => 0, 'max_attempts' => 3, 'status' => 'processing',
+        ]));
+
+        $postId = $articles->find(1)->wordpress_post_id;
+        $this->assertSame('future', $this->wpdb->posts[$postId]['post_status']);
+        $this->assertSame('2026-08-15 10:00:00', $this->wpdb->posts[$postId]['post_date']);
+    }
+
+    public function testHandlePublishFallsBackToDraftWhenFutureHasNoValidScheduledAt(): void
+    {
+        $this->wpdb->articles[1] = [
+            'id' => 1, 'source_title' => 'Titulo', 'generated_content' => '<p>Conteudo</p>',
+            'target_post_status' => 'future', 'scheduled_at' => null, 'created_at' => '2026-01-01 00:00:00',
+        ];
+        $articles = new ArticleRepository();
+        $registry = $this->makeRegistryForPublishOnly($articles);
+
+        $registry->handlePublish(null, \RoboJackSparrow\Queue\Job::fromRow((object) [
+            'id' => 1, 'article_id' => 1, 'job_type' => 'publish', 'job_payload' => '{}', 'attempts' => 0, 'max_attempts' => 3, 'status' => 'processing',
+        ]));
+
+        $postId = $articles->find(1)->wordpress_post_id;
+        $this->assertSame('draft', $this->wpdb->posts[$postId]['post_status'], 'a future status with no usable date must degrade to draft, not disappear');
+    }
+
     public function testMissingArticleThrowsInsteadOfSilentlyFailing(): void
     {
         $articles = new ArticleRepository();
@@ -163,9 +336,13 @@ final class FakeScraper implements ScraperDriverInterface
 
 final class FakeLlmProvider implements LLMProviderInterface
 {
+    public function __construct(private string $name = 'test')
+    {
+    }
+
     public function getName(): string
     {
-        return 'test';
+        return $this->name;
     }
 
     public function send(LLMRequest $request): LLMResponse
@@ -194,11 +371,40 @@ final class FakeLlmProvider implements LLMProviderInterface
     }
 }
 
-final class FakeImageProvider implements ImageProviderInterface
+/**
+ * Always fails - used to prove a decoy provider is never actually invoked
+ * when an article-level/global provider override is in effect.
+ */
+final class RefusingLlmProvider implements LLMProviderInterface
 {
+    public int $calls = 0;
+
+    public function __construct(private string $name)
+    {
+    }
+
     public function getName(): string
     {
-        return 'fake-image';
+        return $this->name;
+    }
+
+    public function send(LLMRequest $request): LLMResponse
+    {
+        $this->calls++;
+
+        throw new LLMException("{$this->name} should not have been called");
+    }
+}
+
+final class FakeImageProvider implements ImageProviderInterface
+{
+    public function __construct(private string $name = 'fake-image')
+    {
+    }
+
+    public function getName(): string
+    {
+        return $this->name;
     }
 
     public function generate(ImageRequest $request): ImageResult
@@ -206,8 +412,33 @@ final class FakeImageProvider implements ImageProviderInterface
         return new ImageResult(
             binaryData: 'fake-binary-image-data',
             mimeType: 'image/png',
-            provider: 'fake-image',
+            provider: $this->name,
             attribution: new ImageAttribution(sourceName: 'Fake')
         );
+    }
+}
+
+/**
+ * Always fails - used to prove a decoy image provider is never actually
+ * invoked when an article-level/global provider override is in effect.
+ */
+final class RefusingImageProvider implements ImageProviderInterface
+{
+    public int $calls = 0;
+
+    public function __construct(private string $name)
+    {
+    }
+
+    public function getName(): string
+    {
+        return $this->name;
+    }
+
+    public function generate(ImageRequest $request): ImageResult
+    {
+        $this->calls++;
+
+        throw new \RoboJackSparrow\Image\ImageException("{$this->name} should not have been called");
     }
 }

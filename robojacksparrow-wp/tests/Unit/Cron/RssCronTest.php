@@ -4,9 +4,11 @@ declare(strict_types=1);
 
 namespace RoboJackSparrow\Tests\Unit\Cron;
 
+use RoboJackSparrow\Core\Encryption;
 use RoboJackSparrow\Core\Logger;
 use RoboJackSparrow\Cron\Handlers\RssCron;
 use RoboJackSparrow\Database\Repositories\ArticleRepository;
+use RoboJackSparrow\Database\Repositories\SettingRepository;
 use RoboJackSparrow\Database\Repositories\SourceRepository;
 use RoboJackSparrow\Queue\QueueManager;
 use RoboJackSparrow\Scraper\Rss\RssParser;
@@ -15,6 +17,20 @@ use RoboJackSparrow\Tests\TestCase;
 
 final class RssCronTest extends TestCase
 {
+    private function makeCron(?SettingRepository $settings = null): RssCron
+    {
+        $logger = new Logger();
+
+        return new RssCron(
+            new SourceRepository(),
+            new RssParser(),
+            new ArticleRepository(),
+            new QueueManager($logger),
+            $settings ?? new SettingRepository(new Encryption(), $logger),
+            $logger
+        );
+    }
+
     private function feedBody(): array
     {
         return [
@@ -27,7 +43,7 @@ final class RssCronTest extends TestCase
         ];
     }
 
-    public function testCollectCreatesArticlesAndEnqueuesScrapeJobsForNewItemsOnly(): void
+    public function testCollectCreatesArticlesAndEnqueuesScrapeJobsForNewItemsOnlyWhenAutopilotEnabled(): void
     {
         $this->wpdb->sources[1] = [
             'id' => 1, 'source_name' => 'Tech Blog', 'source_url' => 'https://example.com/feed',
@@ -41,7 +57,11 @@ final class RssCronTest extends TestCase
 
         HttpFixtures::set('GET', 'https://example.com/feed', $this->feedBody());
 
-        $cron = new RssCron(new SourceRepository(), new RssParser(), new ArticleRepository(), new QueueManager(new Logger()), new Logger());
+        $settings = new SettingRepository(new Encryption(), new Logger());
+        $settings->set('rjs_autopilot_enabled', '1');
+        $settings->set('rjs_autopilot_publish_status', 'publish');
+
+        $cron = $this->makeCron($settings);
         $cron->collect();
 
         // Only Item Two (new) should have created an article + queue job.
@@ -51,11 +71,35 @@ final class RssCronTest extends TestCase
         $this->assertSame('Item Two', $newArticle['source_title']);
         $this->assertSame('rss', $newArticle['source_type']);
         $this->assertSame(7, $newArticle['category_id']);
+        $this->assertSame('publish', $newArticle['target_post_status']);
 
         $this->assertCount(1, $this->wpdb->queueRows, 'exactly one scrape job for the one new item');
         $this->assertSame('scrape', reset($this->wpdb->queueRows)['job_type']);
 
         $this->assertNotEmpty($this->wpdb->sources[1]['last_scraped_at']);
+    }
+
+    public function testCollectCreatesArticlesWithoutEnqueueingWhenAutopilotIsDisabled(): void
+    {
+        $this->wpdb->sources[1] = [
+            'id' => 1, 'source_name' => 'Tech Blog', 'source_url' => 'https://example.com/feed',
+            'source_type' => 'rss', 'is_active' => 1, 'category_id' => 7,
+            'scrape_frequency' => '4_hours', 'created_at' => '2026-01-01 00:00:00',
+        ];
+
+        HttpFixtures::set('GET', 'https://example.com/feed', $this->feedBody());
+
+        // Autopilot is off by default - a fresh install must not start
+        // auto-publishing before the admin has reviewed/configured it.
+        $cron = $this->makeCron();
+        $cron->collect();
+
+        $this->assertCount(2, $this->wpdb->articles, 'articles are still created, just left pending');
+        $newArticle = $this->wpdb->articles[1];
+        $this->assertSame('pending', $newArticle['status']);
+        $this->assertSame('draft', $newArticle['target_post_status']);
+
+        $this->assertSame([], $this->wpdb->queueRows, 'no scrape job must be enqueued while autopilot is disabled');
     }
 
     public function testInactiveSourcesAreSkipped(): void
@@ -66,7 +110,7 @@ final class RssCronTest extends TestCase
             'scrape_frequency' => '4_hours', 'created_at' => '2026-01-01 00:00:00',
         ];
 
-        $cron = new RssCron(new SourceRepository(), new RssParser(), new ArticleRepository(), new QueueManager(new Logger()), new Logger());
+        $cron = $this->makeCron();
         $cron->collect();
 
         $this->assertSame([], $this->wpdb->articles);
@@ -81,7 +125,7 @@ final class RssCronTest extends TestCase
             'scrape_frequency' => '4_hours', 'created_at' => '2026-01-01 00:00:00',
         ];
 
-        $cron = new RssCron(new SourceRepository(), new RssParser(), new ArticleRepository(), new QueueManager(new Logger()), new Logger());
+        $cron = $this->makeCron();
         $cron->collect();
 
         $this->assertSame([], $this->wpdb->articles);
@@ -96,7 +140,7 @@ final class RssCronTest extends TestCase
         // No fixture registered for the broken feed -> HttpFixtures returns a WP_Error.
         HttpFixtures::set('GET', 'https://example.com/feed', $this->feedBody());
 
-        $cron = new RssCron(new SourceRepository(), new RssParser(), new ArticleRepository(), new QueueManager(new Logger()), new Logger());
+        $cron = $this->makeCron();
         $cron->collect();
 
         $this->assertCount(2, $this->wpdb->articles, 'the good source must still be collected despite the broken one failing');
@@ -104,7 +148,7 @@ final class RssCronTest extends TestCase
 
     public function testRegisterHooksIntoRjsRssCollect(): void
     {
-        $cron = new RssCron(new SourceRepository(), new RssParser(), new ArticleRepository(), new QueueManager(new Logger()), new Logger());
+        $cron = $this->makeCron();
         $cron->register();
 
         $this->assertNotEmpty($GLOBALS['__rjs_hooks']['action']['rjs_rss_collect'] ?? []);

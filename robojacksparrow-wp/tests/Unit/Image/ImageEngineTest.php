@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace RoboJackSparrow\Tests\Unit\Image;
 
+use RoboJackSparrow\Core\Encryption;
 use RoboJackSparrow\Core\Logger;
+use RoboJackSparrow\Database\Repositories\SettingRepository;
 use RoboJackSparrow\Image\Dto\ImageRequest;
 use RoboJackSparrow\Image\ImageEngine;
 use RoboJackSparrow\Image\ImageException;
@@ -109,6 +111,51 @@ final class ImageEngineTest extends TestCase
             new PexelsProvider('pex-key'),
             new PixabayProvider('pix-key'),
         ], new Logger());
+
+        $result = $engine->generate(new ImageRequest('a robot'));
+
+        $this->assertSame('pexels', $result->getProvider());
+    }
+
+    public function testPreferredProviderIsTriedFirstEvenOutOfCascadeOrder(): void
+    {
+        $png = self::tinyPng();
+
+        HttpFixtures::setPrefix('GET', 'https://api.pexels.com/v1/search', fn () => [
+            'response' => ['code' => 200],
+            'body'     => json_encode(['photos' => [['src' => ['large' => 'https://images.pexels.com/p.jpg'], 'photographer' => 'John', 'photographer_url' => 'https://pexels.com/@john', 'url' => 'https://pexels.com/p']]]),
+        ]);
+        HttpFixtures::set('GET', 'https://images.pexels.com/p.jpg', ['response' => ['code' => 200], 'body' => $png]);
+
+        // kei.ia is first in cascade order but unconfigured (would fail);
+        // an explicit 'pexels' override must be tried before it anyway.
+        $engine = new ImageEngine([
+            new KeiIaProvider(''),
+            new PexelsProvider('pex-key'),
+        ], new Logger());
+
+        $result = $engine->generate(new ImageRequest('a robot'), 'pexels');
+
+        $this->assertSame('pexels', $result->getProvider());
+    }
+
+    public function testGlobalPreferredProviderSettingIsUsedWhenNoOverrideGiven(): void
+    {
+        $png = self::tinyPng();
+
+        HttpFixtures::setPrefix('GET', 'https://api.pexels.com/v1/search', fn () => [
+            'response' => ['code' => 200],
+            'body'     => json_encode(['photos' => [['src' => ['large' => 'https://images.pexels.com/p.jpg'], 'photographer' => 'John', 'photographer_url' => 'https://pexels.com/@john', 'url' => 'https://pexels.com/p']]]),
+        ]);
+        HttpFixtures::set('GET', 'https://images.pexels.com/p.jpg', ['response' => ['code' => 200], 'body' => $png]);
+
+        $settings = new SettingRepository(new Encryption(), new Logger());
+        $settings->set('rjs_preferred_image_provider', 'pexels');
+
+        $engine = new ImageEngine([
+            new KeiIaProvider(''),
+            new PexelsProvider('pex-key'),
+        ], new Logger(), $settings);
 
         $result = $engine->generate(new ImageRequest('a robot'));
 

@@ -17,13 +17,24 @@ abstract class AbstractOpenAiCompatibleProvider implements LLMProviderInterface
 {
     protected const TIMEOUT = 60;
 
-    public function __construct(protected string $apiKey)
+    /**
+     * @param ?string $model Admin-configured default model for this
+     *     provider (e.g. rjs_openai_model). Falls back to getDefaultModel()
+     *     when null/empty. A model set explicitly on the LLMRequest itself
+     *     always wins over both.
+     */
+    public function __construct(protected string $apiKey, protected ?string $model = null)
     {
     }
 
     abstract protected function getApiUrl(): string;
 
     abstract protected function getDefaultModel(): string;
+
+    protected function resolveModel(): string
+    {
+        return $this->model !== null && trim($this->model) !== '' ? $this->model : $this->getDefaultModel();
+    }
 
     public function send(LLMRequest $request): LLMResponse
     {
@@ -33,7 +44,7 @@ abstract class AbstractOpenAiCompatibleProvider implements LLMProviderInterface
 
         $payload = array_filter(
             [
-                'model'           => $request->getModel() ?? $this->getDefaultModel(),
+                'model'           => $request->getModel() ?? $this->resolveModel(),
                 'messages'        => $this->formatMessages($request),
                 'temperature'     => $request->getTemperature() ?? 0.7,
                 'max_tokens'      => $request->getMaxTokens() ?? 4096,
@@ -73,7 +84,7 @@ abstract class AbstractOpenAiCompatibleProvider implements LLMProviderInterface
             tokensUsed: (int) ($usage['total_tokens'] ?? 0),
             promptTokens: (int) ($usage['prompt_tokens'] ?? 0),
             completionTokens: (int) ($usage['completion_tokens'] ?? 0),
-            model: (string) ($body['model'] ?? $this->getDefaultModel()),
+            model: (string) ($body['model'] ?? $this->resolveModel()),
             finishReason: (string) ($body['choices'][0]['finish_reason'] ?? ''),
             rawResponse: $body
         );

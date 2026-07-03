@@ -132,6 +132,7 @@ function wp_mkdir_p($dir) { return @mkdir($dir, 0755, true); }
 function esc_html($text) { return htmlspecialchars((string) $text, ENT_QUOTES, 'UTF-8'); }
 function esc_attr($text) { return htmlspecialchars((string) $text, ENT_QUOTES, 'UTF-8'); }
 function esc_url_raw($url) { return trim((string) $url); }
+function esc_url($url) { return htmlspecialchars(trim((string) $url), ENT_QUOTES, 'UTF-8'); }
 function sanitize_text_field($text) { return trim(strip_tags((string) $text)); }
 function sanitize_title($title) {
     $slug = strtolower(trim((string) $title));
@@ -253,6 +254,20 @@ function wp_insert_term($name, $taxonomy)
     global $wpdb;
 
     return $wpdb->insertTerm($name);
+}
+
+function get_term($termId, $taxonomy = '')
+{
+    global $wpdb;
+
+    return $wpdb->getTermById((int) $termId);
+}
+
+function get_categories($args = [])
+{
+    global $wpdb;
+
+    return $wpdb->getAllCategories();
 }
 
 function wp_set_post_tags($postId, $tags, $append)

@@ -7,6 +7,7 @@ namespace RoboJackSparrow\Admin;
 use RoboJackSparrow\Admin\Menu\ApiKeysPage;
 use RoboJackSparrow\Admin\Menu\ArticlesPage;
 use RoboJackSparrow\Admin\Menu\DashboardPage;
+use RoboJackSparrow\Admin\Menu\GenerateArticlePage;
 use RoboJackSparrow\Admin\Menu\LogsPage;
 use RoboJackSparrow\Admin\Menu\QueuePage;
 use RoboJackSparrow\Admin\Menu\SettingsPage;
@@ -24,6 +25,7 @@ class Admin
     public function __construct(
         private DashboardPage $dashboard,
         private ArticlesPage $articles,
+        private GenerateArticlePage $generateArticle,
         private QueuePage $queue,
         private SourcesPage $sources,
         private LogsPage $logs,
@@ -50,6 +52,7 @@ class Admin
 
         add_submenu_page(self::SLUG, 'Dashboard', 'Dashboard', self::CAPABILITY, self::SLUG, fn () => print $this->dashboard->render());
         add_submenu_page(self::SLUG, 'Artigos', 'Artigos', self::CAPABILITY, self::SLUG . '-articles', fn () => print $this->articles->render());
+        add_submenu_page(self::SLUG, 'Gerar Artigo', 'Gerar Artigo', self::CAPABILITY, self::SLUG . '-generate', fn () => print $this->generateArticle->render());
         add_submenu_page(self::SLUG, 'Fila', 'Fila', self::CAPABILITY, self::SLUG . '-queue', fn () => print $this->queue->render());
         add_submenu_page(self::SLUG, 'Fontes', 'Fontes', self::CAPABILITY, self::SLUG . '-sources', fn () => print $this->sources->render());
         add_submenu_page(self::SLUG, 'Logs', 'Logs', self::CAPABILITY, self::SLUG . '-logs', fn () => print $this->logs->render());

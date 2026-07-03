@@ -15,7 +15,7 @@ class GeminiProvider implements LLMProviderInterface
     private const DEFAULT_MODEL = 'gemini-1.5-flash';
     private const TIMEOUT = 60;
 
-    public function __construct(private string $apiKey)
+    public function __construct(private string $apiKey, private ?string $model = null)
     {
     }
 
@@ -24,13 +24,18 @@ class GeminiProvider implements LLMProviderInterface
         return 'gemini';
     }
 
+    private function resolveModel(): string
+    {
+        return $this->model !== null && trim($this->model) !== '' ? $this->model : self::DEFAULT_MODEL;
+    }
+
     public function send(LLMRequest $request): LLMResponse
     {
         if (trim($this->apiKey) === '') {
             throw new LLMException('Gemini API key is not configured');
         }
 
-        $model = $request->getModel() ?? self::DEFAULT_MODEL;
+        $model = $request->getModel() ?? $this->resolveModel();
         $url = self::API_BASE . "/models/{$model}:generateContent?key=" . rawurlencode($this->apiKey);
 
         $promptText = trim(($request->getSystemPrompt() ?? '') . "\n\n" . $request->getPrompt());

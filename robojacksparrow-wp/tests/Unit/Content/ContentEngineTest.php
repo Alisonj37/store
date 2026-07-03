@@ -79,6 +79,24 @@ final class ContentEngineTest extends TestCase
         // Proves the Tavily briefing is actually injected into the prompts.
         $this->assertStringContainsString('Resposta verificada ABC sobre o lancamento do robo.', $provider->prompts[0]);
         $this->assertStringContainsString('Resposta verificada ABC sobre o lancamento do robo.', $provider->prompts[1]);
+
+        // External citations from the research sources (AEO/GEO: answer
+        // engines weigh cited, checkable sources).
+        $this->assertStringContainsString('<h2>Fontes</h2>', $result->getHtmlContent());
+        $this->assertStringContainsString('<a href="https://example.com/fonte" target="_blank" rel="noopener noreferrer">Fonte Exemplo Verificada</a>', $result->getHtmlContent());
+    }
+
+    public function testNoSourcesBlockIsAddedWhenResearchHasNoSources(): void
+    {
+        $provider = new ScriptedProvider();
+        $engine = $this->makeEngine($provider);
+
+        $source = new ScrapedContent(url: 'x', title: 'X', text: 'text', html: null);
+        $research = new ResearchData(facts: [], sources: [], answer: null, entities: [], fromFallback: true);
+
+        $result = $engine->generate(1, $source, $research);
+
+        $this->assertStringNotContainsString('<h2>Fontes</h2>', $result->getHtmlContent());
     }
 
     public function testFallbackResearchDataStillProducesContentWithPlaceholderBriefing(): void

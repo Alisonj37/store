@@ -200,6 +200,9 @@ class wpdb
         if (str_contains($query, 'GROUP BY level')) {
             return $this->groupByCounts($this->logs, 'level');
         }
+        if (str_contains($query, 'rjs_articles') && str_contains($query, "status = 'published'") && str_contains($query, 'wordpress_post_url IS NOT NULL')) {
+            return $this->selectRelatedPublished($query, $this->lastPrepareArgs);
+        }
         if (str_contains($query, 'rjs_articles')) {
             return $this->selectRows($this->articles, $query, 'status');
         }
@@ -418,6 +421,46 @@ class wpdb
         return $result;
     }
 
+    /**
+     * Backs ArticleRepository::findRelatedPublished(): a distinct shape from
+     * selectRows() (multiple AND'ed conditions, one of them a hardcoded
+     * literal rather than a placeholder, plus an exclude-by-id and an
+     * optional category filter) rather than the single filterField+limit
+     * pattern selectRows() assumes.
+     */
+    private function selectRelatedPublished(string $query, array $args): array
+    {
+        if (str_contains($query, 'category_name = %s')) {
+            [$excludeId, $categoryName, $limit] = $args;
+        } else {
+            [$excludeId, $limit] = $args;
+            $categoryName = null;
+        }
+
+        $filtered = array_filter($this->articles, static function (array $row) use ($excludeId, $categoryName): bool {
+            if (($row['status'] ?? null) !== 'published') {
+                return false;
+            }
+            if (empty($row['wordpress_post_url'])) {
+                return false;
+            }
+            if ((int) ($row['id'] ?? 0) === (int) $excludeId) {
+                return false;
+            }
+            if ($categoryName !== null && ($row['category_name'] ?? null) !== $categoryName) {
+                return false;
+            }
+
+            return true;
+        });
+
+        $filtered = array_values($filtered);
+        usort($filtered, static fn (array $a, array $b) => strcmp((string) $b['created_at'], (string) $a['created_at']));
+        $filtered = array_slice($filtered, 0, (int) $limit);
+
+        return array_map(static fn (array $r) => (object) $r, $filtered);
+    }
+
     private function selectRows(array $rows, string $query, string $filterField): array
     {
         $hasWhere = str_contains($query, 'WHERE');
@@ -468,6 +511,30 @@ class wpdb
         $this->categories[$name] = $id;
 
         return ['term_id' => $id];
+    }
+
+    public function getTermById(int $termId)
+    {
+        foreach ($this->categories as $name => $id) {
+            if ($id === $termId) {
+                return (object) ['term_id' => $id, 'name' => $name];
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * @return object[]
+     */
+    public function getAllCategories(): array
+    {
+        $result = [];
+        foreach ($this->categories as $name => $id) {
+            $result[] = (object) ['term_id' => $id, 'name' => $name];
+        }
+
+        return $result;
     }
 
     public function setPostTags(int $postId, array $tags): void

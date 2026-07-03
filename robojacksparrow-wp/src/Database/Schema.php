@@ -115,6 +115,7 @@ class Schema
             watermark_overlay_url  VARCHAR(500) NULL,
             custom_post_type       VARCHAR(20) NOT NULL DEFAULT 'post',
             custom_taxonomy        VARCHAR(32) NOT NULL DEFAULT 'category',
+            target_post_status     VARCHAR(20) NOT NULL DEFAULT 'publish',
             scheduled_at           DATETIME NULL,
             started_at             DATETIME NULL,
             completed_at           DATETIME NULL,

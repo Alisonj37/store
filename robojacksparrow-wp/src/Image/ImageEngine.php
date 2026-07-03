@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace RoboJackSparrow\Image;
 
 use RoboJackSparrow\Core\Logger;
+use RoboJackSparrow\Database\Repositories\SettingRepository;
 use RoboJackSparrow\Image\Contracts\ImageProviderInterface;
 use RoboJackSparrow\Image\Dto\ImageRequest;
 use RoboJackSparrow\Image\Dto\ImageResult;
@@ -22,15 +23,24 @@ class ImageEngine
      */
     public function __construct(
         private array $providers,
-        private Logger $logger
+        private Logger $logger,
+        private ?SettingRepository $settings = null
     ) {
     }
 
-    public function generate(ImageRequest $request): ImageResult
+    /**
+     * @param ?string $preferredProvider Article-level override (e.g. the
+     *     'assigned_image_source' column, when not 'auto'). Wins over the
+     *     global 'rjs_preferred_image_provider' setting. When it matches a
+     *     configured provider, that provider is tried first; the rest of
+     *     the cascade still runs, in its normal order, as fallback if the
+     *     preferred one fails.
+     */
+    public function generate(ImageRequest $request, ?string $preferredProvider = null): ImageResult
     {
         $lastError = null;
 
-        foreach ($this->providers as $provider) {
+        foreach ($this->orderedProviders($this->resolvePreferredProvider($preferredProvider)) as $provider) {
             try {
                 $result = $provider->generate($request);
 
@@ -50,5 +60,43 @@ class ImageEngine
         }
 
         throw new ImageException('All image providers failed. Last error: ' . ($lastError?->getMessage() ?? 'unknown'));
+    }
+
+    /**
+     * @return ImageProviderInterface[]
+     */
+    private function orderedProviders(?string $preferredProvider): array
+    {
+        if ($preferredProvider === null || trim($preferredProvider) === '') {
+            return $this->providers;
+        }
+
+        $preferred = [];
+        $rest = [];
+
+        foreach ($this->providers as $provider) {
+            if ($provider->getName() === $preferredProvider) {
+                $preferred[] = $provider;
+            } else {
+                $rest[] = $provider;
+            }
+        }
+
+        return [...$preferred, ...$rest];
+    }
+
+    private function resolvePreferredProvider(?string $override): ?string
+    {
+        if ($override !== null && trim($override) !== '') {
+            return $override;
+        }
+
+        if ($this->settings === null) {
+            return null;
+        }
+
+        $global = trim((string) $this->settings->get('rjs_preferred_image_provider', ''));
+
+        return $global !== '' ? $global : null;
     }
 }

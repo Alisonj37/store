@@ -37,7 +37,7 @@ final class PluginBootTest extends TestCase
         \do_action('admin_menu');
 
         $this->assertArrayHasKey('robojacksparrow', $GLOBALS['__rjs_menu']);
-        $this->assertCount(7, $GLOBALS['__rjs_submenu']);
+        $this->assertCount(8, $GLOBALS['__rjs_submenu']);
     }
 
     public function testRestRoutesRegisterRegardlessOfIsAdmin(): void

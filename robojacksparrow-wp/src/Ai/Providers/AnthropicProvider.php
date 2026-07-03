@@ -16,13 +16,18 @@ class AnthropicProvider implements LLMProviderInterface
     private const DEFAULT_MODEL = 'claude-3-haiku-20240307';
     private const TIMEOUT = 60;
 
-    public function __construct(private string $apiKey)
+    public function __construct(private string $apiKey, private ?string $model = null)
     {
     }
 
     public function getName(): string
     {
         return 'anthropic';
+    }
+
+    private function resolveModel(): string
+    {
+        return $this->model !== null && trim($this->model) !== '' ? $this->model : self::DEFAULT_MODEL;
     }
 
     public function send(LLMRequest $request): LLMResponse
@@ -32,7 +37,7 @@ class AnthropicProvider implements LLMProviderInterface
         }
 
         $payload = [
-            'model'       => $request->getModel() ?? self::DEFAULT_MODEL,
+            'model'       => $request->getModel() ?? $this->resolveModel(),
             'max_tokens'  => $request->getMaxTokens() ?? 4096,
             'temperature' => $request->getTemperature() ?? 0.7,
             'messages'    => $this->formatMessages($request),
@@ -80,7 +85,7 @@ class AnthropicProvider implements LLMProviderInterface
             tokensUsed: $inputTokens + $outputTokens,
             promptTokens: $inputTokens,
             completionTokens: $outputTokens,
-            model: (string) ($body['model'] ?? self::DEFAULT_MODEL),
+            model: (string) ($body['model'] ?? $this->resolveModel()),
             finishReason: (string) ($body['stop_reason'] ?? ''),
             rawResponse: $body
         );
