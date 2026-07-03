@@ -90,6 +90,18 @@ final class ArticleDraftParserTest extends TestCase
         (new ArticleDraftParser())->parse(json_encode(['title' => 'X', 'sections' => [['title' => '', 'html' => '']]]));
     }
 
+    public function testParsesSuccessfullyEvenWhenLastSectionWasCutOffByTruncation(): void
+    {
+        $truncated = '{"title":"Titulo","sections":['
+            . '{"title":"Intro","level":2,"html":"<p>ok</p>"},'
+            . '{"title":"Cortada no me';
+
+        $draft = (new ArticleDraftParser())->parse($truncated);
+
+        $this->assertSame('Titulo', $draft->getTitle());
+        $this->assertCount(1, $draft->getSections(), 'the cut-off trailing section must be dropped, not crash the whole parse');
+    }
+
     public function testStripsMarkdownCodeFencesBeforeParsing(): void
     {
         $json = "```json\n" . json_encode([

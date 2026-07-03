@@ -261,7 +261,9 @@ class GenerateArticlePage
 
         return '<div class="notice notice-warning"><p>Artigo #' . $articleId . ' criado e enviado para a fila (status atual: '
             . esc_html((string) $article->status) . '). A geracao pode levar alguns minutos - atualize esta pagina '
-            . 'ou acompanhe na aba <strong>Artigos</strong>.</p></div>';
+            . 'ou acompanhe na aba <strong>Artigos</strong>. Se continuar assim apos algumas atualizacoes, veja a '
+            . 'coluna <strong>Detalhes</strong> na pagina <strong>Logs</strong> (filtre por Post ID ' . $articleId
+            . ') para o motivo exato da falha.</p></div>';
     }
 
     /**

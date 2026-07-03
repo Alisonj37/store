@@ -53,6 +53,10 @@ class LogsPage
             'since'      => $this->periodToSince($period),
         ], self::PER_PAGE);
 
+        foreach ($rows as $row) {
+            $row->details = $this->extractDetails($row);
+        }
+
         $html = '<div class="wrap"><h1>Logs</h1>';
         $html .= $this->renderFilterForm($level, $source, $period, $articleId);
         $html .= View::table($rows, [
@@ -61,6 +65,7 @@ class LogsPage
             'source'     => 'Origem',
             'article_id' => 'Post ID',
             'message'    => 'Mensagem',
+            'details'    => 'Detalhes (motivo do erro)',
         ]);
         $html .= '</div>';
 
@@ -120,6 +125,34 @@ class LogsPage
             '30d'   => gmdate('Y-m-d H:i:s', time() - 30 * DAY_IN_SECONDS),
             default => null,
         };
+    }
+
+    /**
+     * The 'message' column is deliberately generic for machine-triggered
+     * entries (e.g. Worker::handleFailure always logs "Job failed" so it can
+     * be searched/grouped) - the real reason lives in the 'context' JSON
+     * column, which was previously never shown anywhere, forcing a direct DB
+     * dump just to find out *why* a job failed. Surfacing the 'error' key
+     * (or the whole context, if there's no such key) here makes every
+     * failure self-diagnosable straight from this page.
+     */
+    private function extractDetails(object $row): string
+    {
+        $context = $row->context ?? null;
+        if ($context === null || $context === '') {
+            return '';
+        }
+
+        $decoded = json_decode((string) $context, true);
+        if (!is_array($decoded)) {
+            return '';
+        }
+
+        if (isset($decoded['error']) && is_string($decoded['error']) && $decoded['error'] !== '') {
+            return $decoded['error'];
+        }
+
+        return (string) wp_json_encode($decoded);
     }
 
     private function stringParam(string $key): ?string

@@ -13,7 +13,7 @@ class GeminiProvider implements LLMProviderInterface
 {
     private const API_BASE = 'https://generativelanguage.googleapis.com/v1beta';
     private const DEFAULT_MODEL = 'gemini-1.5-flash';
-    private const TIMEOUT = 60;
+    private const TIMEOUT = 120;
 
     public function __construct(private string $apiKey, private ?string $model = null)
     {

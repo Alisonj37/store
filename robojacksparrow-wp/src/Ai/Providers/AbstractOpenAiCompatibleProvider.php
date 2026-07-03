@@ -15,7 +15,14 @@ use RoboJackSparrow\Ai\LLMException;
  */
 abstract class AbstractOpenAiCompatibleProvider implements LLMProviderInterface
 {
-    protected const TIMEOUT = 60;
+    /**
+     * The single-call article generation can legitimately ask a model to
+     * produce several thousand completion tokens (full article body + FAQs)
+     * in one non-streamed response; 60s was tuned for the old, much smaller
+     * per-section calls and could cut off a slower model mid-generation,
+     * surfacing as a generic connection-timeout failure with no clear cause.
+     */
+    protected const TIMEOUT = 120;
 
     /**
      * @param ?string $model Admin-configured default model for this

@@ -192,6 +192,24 @@ final class ContentEngineTest extends TestCase
         $this->assertSame('Titulo Gerado de Teste', $result->getTitle());
         $this->assertStringContainsString('Nenhuma pesquisa adicional disponivel', $provider->prompts[0]);
     }
+
+    public function testTruncatedResponseRaisesAClearActionableErrorInsteadOfAGenericParseFailure(): void
+    {
+        $provider = new ScriptedProvider();
+        $provider->simulateTruncatedResponse = true;
+        $engine = $this->makeEngine($provider);
+
+        $source = new ScrapedContent(url: 'https://example.com/x', title: 'X', text: 'text', html: null);
+        $research = new ResearchData(facts: [], sources: [], answer: null, entities: [], fromFallback: true);
+
+        try {
+            $engine->generate(7, $source, $research);
+            $this->fail('Expected a ContentException for the truncated response.');
+        } catch (\RoboJackSparrow\Content\ContentException $e) {
+            $this->assertStringContainsString('finish_reason=length', $e->getMessage());
+            $this->assertStringContainsString('limite de tokens', $e->getMessage());
+        }
+    }
 }
 
 final class ScriptedProvider implements LLMProviderInterface
@@ -201,6 +219,14 @@ final class ScriptedProvider implements LLMProviderInterface
 
     /** @var array<int, ?string> */
     public array $requestedModels = [];
+
+    /**
+     * When set, simulates a provider that hit its max_tokens ceiling mid
+     * response - the JSON comes back cut off and finish_reason is 'length',
+     * the exact signature ContentEngine::parseDraftOrFail() should detect
+     * and report as a clear, actionable truncation error.
+     */
+    public bool $simulateTruncatedResponse = false;
 
     public function getName(): string
     {
@@ -212,6 +238,18 @@ final class ScriptedProvider implements LLMProviderInterface
         $prompt = $request->getPrompt();
         $this->prompts[] = $prompt;
         $this->requestedModels[] = $request->getModel();
+
+        if ($this->simulateTruncatedResponse && str_contains($prompt, 'Escreva um artigo ORIGINAL')) {
+            return new LLMResponse(
+                content: '{"title":"Titulo Cortado","sections":[{"title":"So o inicio da fra',
+                tokensUsed: 4096,
+                promptTokens: 400,
+                completionTokens: 3696,
+                model: 'test-model',
+                finishReason: 'length',
+                rawResponse: []
+            );
+        }
 
         if (str_contains($prompt, 'Escreva um artigo ORIGINAL')) {
             return new LLMResponse(

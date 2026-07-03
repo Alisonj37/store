@@ -14,7 +14,7 @@ class AnthropicProvider implements LLMProviderInterface
     private const API_URL = 'https://api.anthropic.com/v1/messages';
     private const API_VERSION = '2023-06-01';
     private const DEFAULT_MODEL = 'claude-3-haiku-20240307';
-    private const TIMEOUT = 60;
+    private const TIMEOUT = 120;
 
     public function __construct(private string $apiKey, private ?string $model = null)
     {

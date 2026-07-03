@@ -507,6 +507,27 @@ final class AdminPagesTest extends TestCase
         $this->assertStringNotContainsString('Falhou', $htmlByPost);
     }
 
+    public function testLogsPageShowsTheRealFailureReasonFromContextNotJustTheGenericMessage(): void
+    {
+        // Worker::handleFailure() always logs the generic "Job failed" as
+        // the message (so failures can be searched/grouped by that string)
+        // and stashes the actual reason under context.error - previously
+        // nothing on this page ever showed that, so a failure was
+        // undiagnosable without a direct database dump.
+        $this->wpdb->logs = [
+            1 => [
+                'id' => 1, 'article_id' => 9, 'level' => 'error', 'source' => 'RoboJackSparrow\\Queue\\Worker::handleFailure',
+                'message' => 'Job failed', 'created_at' => '2026-01-01 00:00:00',
+                'context' => json_encode(['error' => 'OpenAI API error: model `gpt-9000` does not exist']),
+            ],
+        ];
+
+        $html = (new LogsPage(new LogRepository()))->render();
+
+        $this->assertStringContainsString('Detalhes', $html);
+        $this->assertStringContainsString('OpenAI API error: model', $html);
+    }
+
     public function testLogsPageClearFiltersButtonIgnoresEveryOtherFilterOnTheSameSubmission(): void
     {
         $this->wpdb->logs = [

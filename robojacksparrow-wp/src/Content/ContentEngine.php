@@ -5,9 +5,11 @@ declare(strict_types=1);
 namespace RoboJackSparrow\Content;
 
 use RoboJackSparrow\Ai\Dto\LLMRequest;
+use RoboJackSparrow\Ai\Dto\LLMResponse;
 use RoboJackSparrow\Ai\LLMRouter;
 use RoboJackSparrow\Content\Dto\Faq;
 use RoboJackSparrow\Content\Dto\GeneratedContent;
+use RoboJackSparrow\Content\Draft\ArticleDraft;
 use RoboJackSparrow\Content\Draft\ArticleDraftParser;
 use RoboJackSparrow\Content\Prompts\PromptLibrary;
 use RoboJackSparrow\Content\Seo\SeoGenerator;
@@ -86,7 +88,7 @@ class ContentEngine
             preferredProvider: $provider
         ));
 
-        $draft = $this->draftParser->parse($response->getContent());
+        $draft = $this->parseDraftOrFail($response, $articleId);
         $totalTokens = $response->getTokensUsed();
 
         $sections = [];
@@ -115,6 +117,44 @@ class ContentEngine
             imagePrompt: $draft->getImagePrompt(),
             tokensUsed: $totalTokens
         );
+    }
+
+    /**
+     * Wraps ArticleDraftParser::parse() so a parse failure - which the
+     * single-call architecture makes far more likely than the old
+     * multi-call one, since one huge JSON response has to come back intact
+     * instead of several small ones - always leaves a genuinely diagnosable
+     * trail in the logs (raw response snippet + finish_reason) instead of
+     * just bubbling up as an opaque "Job failed" with no visible detail.
+     */
+    private function parseDraftOrFail(LLMResponse $response, int $articleId): ArticleDraft
+    {
+        try {
+            return $this->draftParser->parse($response->getContent());
+        } catch (ContentException $e) {
+            $finishReason = $response->getFinishReason();
+            $truncated = $finishReason === 'length';
+
+            $this->logger->error('Failed to parse LLM article response', [
+                'article_id'     => $articleId,
+                'error'          => $e->getMessage(),
+                'finish_reason'  => $finishReason,
+                'provider'       => $response->getProvider(),
+                'model'          => $response->getModel(),
+                'completion_tokens' => $response->getCompletionTokens(),
+                'raw_response_snippet' => mb_substr($response->getContent(), 0, 1500),
+            ]);
+
+            if ($truncated) {
+                throw new ContentException(
+                    'A resposta da IA foi cortada por atingir o limite de tokens antes de terminar o artigo '
+                    . '(finish_reason=length). Reduza a quantidade de palavras alvo em Configuracoes ou tente '
+                    . 'novamente. Detalhe original: ' . $e->getMessage()
+                );
+            }
+
+            throw new ContentException('Nao foi possivel interpretar o artigo gerado pela IA: ' . $e->getMessage());
+        }
     }
 
     /**
