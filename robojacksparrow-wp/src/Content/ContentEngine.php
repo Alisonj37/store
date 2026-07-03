@@ -35,6 +35,18 @@ use RoboJackSparrow\Scraper\Dto\ScrapedContent;
  */
 class ContentEngine
 {
+    private const BODY_IMAGE_TOKEN_PREFIX = 'RJS_BODY_IMAGE_';
+
+    /**
+     * How a body-image token is embedded in the HTML content as a
+     * placeholder, shared with whatever later substitutes it for a real
+     * <img> tag once the image exists (see PostPublisher).
+     */
+    public static function placeholderFor(string $token): string
+    {
+        return "<!--{$token}-->";
+    }
+
     public function __construct(
         private LLMRouter $llm,
         private SeoGenerator $seo,
@@ -68,9 +80,17 @@ class ContentEngine
         $briefing = $research->toBriefing();
         $provider = $this->resolvePreferredProvider($preferredProvider);
         $model = $modelOverride !== null && trim($modelOverride) !== '' ? $modelOverride : null;
-        $wordCount = (int) $this->settings->get('rjs_target_word_count', 1500);
+        $tone = $this->resolveTone($toneOverride);
+        $bounds = TonePresets::wordCountBoundsFor($tone);
+        $target = max($bounds['min'], min($bounds['max'], (int) $this->settings->get('rjs_target_word_count', $bounds['default'])));
 
-        $this->logger->info('Starting single-call article generation', ['article_id' => $articleId]);
+        $this->logger->info('Starting single-call article generation', [
+            'article_id' => $articleId,
+            'tone'       => $tone,
+            'min_words'  => $bounds['min'],
+            'max_words'  => $bounds['max'],
+            'target_words' => $target,
+        ]);
 
         $response = $this->llm->route(new LLMRequest(
             prompt: $this->prompts->get('article_generation', [
@@ -78,12 +98,14 @@ class ContentEngine
                 'content'           => mb_substr($source->getText(), 0, 8000),
                 'research_briefing' => $this->briefingOrFallback($briefing),
                 'language'          => $this->settings->get('rjs_content_language', 'pt_BR'),
-                'tone_instructions' => $this->resolveToneInstructions($toneOverride),
-                'word_count'        => $wordCount,
+                'tone_instructions' => TonePresets::instructionsFor($tone),
+                'min_word_count'    => $bounds['min'],
+                'max_word_count'    => $bounds['max'],
+                'target_word_count' => $target,
             ]),
             model: $model,
             isJsonMode: true,
-            maxTokens: $this->resolveMaxTokens($wordCount),
+            maxTokens: $this->resolveMaxTokens($bounds['max']),
             temperature: 0.7,
             preferredProvider: $provider
         ));
@@ -102,7 +124,21 @@ class ContentEngine
         }
 
         $fullContent = implode("\n\n", array_column($sections, 'html'));
-        $seoData = $this->seo->generate($draft->getTitle(), $draft->getMetaDescription(), $fullContent);
+        $actualWordCount = array_sum(array_column($sections, 'word_count'));
+
+        if ($actualWordCount < $bounds['min']) {
+            $this->logger->warning('Generated article is shorter than the tone\'s minimum word count', [
+                'article_id'   => $articleId,
+                'tone'         => $tone,
+                'actual_words' => $actualWordCount,
+                'min_words'    => $bounds['min'],
+            ]);
+        }
+
+        $seoData = $this->seo->generate($draft->getTitle(), $draft->getMetaDescription(), $fullContent, $draft->getFocusKeywords());
+
+        $bodyImagePlan = $this->planBodyImages($sections, $draft->getTitle(), $draft->getFocusKeywords());
+        $sections = $this->embedBodyImagePlaceholders($sections, $bodyImagePlan);
 
         return new GeneratedContent(
             title: $draft->getTitle(),
@@ -115,8 +151,82 @@ class ContentEngine
             faqs: $draft->getFaqs(),
             sections: $sections,
             imagePrompt: $draft->getImagePrompt(),
-            tokensUsed: $totalTokens
+            tokensUsed: $totalTokens,
+            bodyImagePrompts: $bodyImagePlan
         );
+    }
+
+    /**
+     * Decides how many in-body images the article needs and after which
+     * section each one goes: at least 2 images for every 3 H2 headings
+     * (photo galleries/infographics break up walls of text and are a
+     * concrete Rank Math/AEO signal), spread evenly through the sections
+     * rather than clustered near the top. Only plans placeholders here -
+     * the images themselves are generated later (JobRegistry's
+     * generate_image job), since that needs a network call per image and
+     * has to stay out of this single LLM-call step.
+     *
+     * @param array<int, array{title: string, level: int, html: string, word_count: int}> $sections
+     * @param string[] $focusKeywords
+     * @return array<int, array{token: string, prompt: string, alt: string, after_index: int}>
+     */
+    private function planBodyImages(array $sections, string $articleTitle, array $focusKeywords): array
+    {
+        $count = count($sections);
+        if ($count === 0) {
+            return [];
+        }
+
+        $imageCount = min($count, max(1, (int) ceil($count * 2 / 3)));
+        $step = $count / $imageCount;
+
+        $chosenIndices = [];
+        for ($k = 0; $k < $imageCount; $k++) {
+            $chosenIndices[min($count - 1, (int) round($k * $step))] = true;
+        }
+
+        $keyword = trim((string) ($focusKeywords[0] ?? ''));
+
+        $plan = [];
+        $n = 0;
+        foreach (array_keys($chosenIndices) as $index) {
+            $sectionTitle = $sections[$index]['title'];
+            $plan[] = [
+                'after_index' => $index,
+                'token'       => self::BODY_IMAGE_TOKEN_PREFIX . $n,
+                'prompt'      => sprintf(
+                    'Editorial photo/illustration for a web article titled "%s", specifically for the section "%s"%s. Realistic, high quality, no text overlay.',
+                    $articleTitle,
+                    $sectionTitle,
+                    $keyword !== '' ? sprintf(' (topic: %s)', $keyword) : ''
+                ),
+                'alt' => $keyword !== '' ? $sectionTitle . ' - ' . $keyword : $sectionTitle,
+            ];
+            $n++;
+        }
+
+        usort($plan, static fn (array $a, array $b) => $a['after_index'] <=> $b['after_index']);
+
+        return $plan;
+    }
+
+    /**
+     * @param array<int, array{title: string, level: int, html: string, word_count: int}> $sections
+     * @param array<int, array{token: string, prompt: string, alt: string, after_index: int}> $plan
+     * @return array<int, array{title: string, level: int, html: string, word_count: int}>
+     */
+    private function embedBodyImagePlaceholders(array $sections, array $plan): array
+    {
+        foreach ($plan as $entry) {
+            $index = $entry['after_index'];
+            if (!isset($sections[$index])) {
+                continue;
+            }
+
+            $sections[$index]['html'] .= "\n" . self::placeholderFor($entry['token']);
+        }
+
+        return $sections;
     }
 
     /**
@@ -230,15 +340,15 @@ class ContentEngine
         return $global !== '' ? $global : null;
     }
 
-    private function resolveToneInstructions(?string $override): string
+    private function resolveTone(?string $override): string
     {
         if ($override !== null && TonePresets::isValid($override)) {
-            return TonePresets::instructionsFor($override);
+            return $override;
         }
 
         $global = (string) $this->settings->get('rjs_content_tone', TonePresets::defaultPreset());
 
-        return TonePresets::instructionsFor($global);
+        return TonePresets::isValid($global) ? $global : TonePresets::defaultPreset();
     }
 
     /**

@@ -43,18 +43,38 @@ abstract class AbstractOpenAiCompatibleProvider implements LLMProviderInterface
         return $this->model !== null && trim($this->model) !== '' ? $this->model : $this->getDefaultModel();
     }
 
+    /**
+     * OpenAI's reasoning-class models (o1/o3/o4... and the gpt-5 family)
+     * use a different request shape than classic chat-completions models:
+     * they reject a custom `temperature` (only the default is accepted) and
+     * require `max_completion_tokens` instead of `max_tokens` - sending the
+     * old shape gets an outright 400 error, which would otherwise look
+     * exactly like any other "model not implemented well" failure. Groq and
+     * DeepSeek (the other two providers built on this shared class) don't
+     * have this model family, so the override lives in OpenAIProvider, not
+     * here; this base implementation stays the classic shape by default.
+     */
+    protected function isReasoningModel(string $model): bool
+    {
+        return false;
+    }
+
     public function send(LLMRequest $request): LLMResponse
     {
         if (trim($this->apiKey) === '') {
             throw new LLMException(ucfirst($this->getName()) . ' API key is not configured');
         }
 
+        $model = $request->getModel() ?? $this->resolveModel();
+        $isReasoningModel = $this->isReasoningModel($model);
+        $maxTokensKey = $isReasoningModel ? 'max_completion_tokens' : 'max_tokens';
+
         $payload = array_filter(
             [
-                'model'           => $request->getModel() ?? $this->resolveModel(),
+                'model'           => $model,
                 'messages'        => $this->formatMessages($request),
-                'temperature'     => $request->getTemperature() ?? 0.7,
-                'max_tokens'      => $request->getMaxTokens() ?? 4096,
+                'temperature'     => $isReasoningModel ? null : ($request->getTemperature() ?? 0.7),
+                $maxTokensKey     => $request->getMaxTokens() ?? 4096,
                 'response_format' => $request->isJsonMode() ? ['type' => 'json_object'] : null,
             ],
             static fn ($value) => $value !== null

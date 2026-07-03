@@ -152,6 +152,66 @@ final class ContentEngineTest extends TestCase
         $this->assertStringContainsString('equilibrado', $provider->prompts[0]);
     }
 
+    public function testNewsToneEnforcesTheSubThousandWordBoundsRegardlessOfTheConfiguredSetting(): void
+    {
+        $provider = new ScriptedProvider();
+        $settings = new SettingRepository(new Encryption(), new Logger());
+        // A stale/misconfigured setting from before this rule existed must
+        // not be able to push a news article over its 999-word ceiling.
+        $settings->set('rjs_target_word_count', '2000');
+        $engine = $this->makeEngine($provider, $settings);
+
+        $source = new ScrapedContent(url: 'x', title: 'X', text: 'text', html: null);
+        $research = new ResearchData(facts: [], sources: [], answer: null, entities: [], fromFallback: true);
+
+        $engine->generate(1, $source, $research, null, null, 'noticia');
+
+        $bounds = \RoboJackSparrow\Content\Tone\TonePresets::wordCountBoundsFor('noticia');
+        $this->assertStringContainsString('NO MINIMO ' . $bounds['min'], $provider->prompts[0]);
+        $this->assertStringContainsString('NO MAXIMO ' . $bounds['max'], $provider->prompts[0]);
+    }
+
+    public function testNonNewsToneEnforcesThe1500To2500WordBounds(): void
+    {
+        $provider = new ScriptedProvider();
+        $engine = $this->makeEngine($provider);
+
+        $source = new ScrapedContent(url: 'x', title: 'X', text: 'text', html: null);
+        $research = new ResearchData(facts: [], sources: [], answer: null, entities: [], fromFallback: true);
+
+        $engine->generate(1, $source, $research, null, null, 'tecnologia');
+
+        $this->assertStringContainsString('NO MINIMO 1500', $provider->prompts[0]);
+        $this->assertStringContainsString('NO MAXIMO 2500', $provider->prompts[0]);
+    }
+
+    public function testBodyImagePlaceholdersAreEmbeddedInContentAndReturnedAsAPlan(): void
+    {
+        $provider = new ScriptedProvider();
+        $engine = $this->makeEngine($provider);
+
+        $source = new ScrapedContent(url: 'x', title: 'X', text: 'text', html: null);
+        $research = new ResearchData(facts: [], sources: [], answer: null, entities: [], fromFallback: true);
+
+        // ScriptedProvider's fixture response always has 2 H2 sections
+        // (Introducao, Detalhes Tecnicos) - "at least 2 images per 3 H2"
+        // means both of them get an image placeholder here.
+        $result = $engine->generate(1, $source, $research);
+
+        $plan = $result->getBodyImagePrompts();
+        $this->assertCount(2, $plan);
+
+        foreach ($plan as $entry) {
+            $this->assertStringContainsString(
+                ContentEngine::placeholderFor($entry['token']),
+                $result->getHtmlContent(),
+                'every planned placeholder token must actually appear in the assembled HTML'
+            );
+            $this->assertNotSame('', trim($entry['prompt']));
+            $this->assertNotSame('', trim($entry['alt']));
+        }
+    }
+
     public function testPromptInstructsOriginalityNotCopying(): void
     {
         $provider = new ScriptedProvider();

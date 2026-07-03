@@ -31,6 +31,32 @@ final class SeoIntegratorTest extends TestCase
         $this->assertArrayNotHasKey('_yoast_wpseo_title', $this->wpdb->postMeta[900]);
     }
 
+    /**
+     * ContentEngine/SeoGenerator build the Article schema before the post
+     * exists, so it's missing everything that actually makes it useful for
+     * Google rich results / AI answer engines (canonical URL, real publish
+     * date, author/publisher, image) - SeoIntegrator must fill those in
+     * once the post (and its featured image) actually exist.
+     */
+    public function testArticleSchemaIsEnrichedWithPostSpecificFieldsBeforeBeingStored(): void
+    {
+        $this->wpdb->thumbnails[950] = 500;
+        $this->wpdb->attachmentUrls[500] = 'https://example.test/uploads/featured.png';
+
+        $seo = new SeoIntegrator();
+        $request = new PublishRequest('T', '<p>x</p>', 'SEO Title', 'SEO Desc', schemaArticle: ['@type' => 'Article', 'headline' => 'T']);
+
+        $seo->apply(950, $request);
+
+        $schema = json_decode((string) $this->wpdb->postMeta[950]['_rjs_schema_article'], true);
+
+        $this->assertSame('https://example.test/?p=950', $schema['url']);
+        $this->assertSame('https://example.test/?p=950', $schema['mainEntityOfPage']['@id']);
+        $this->assertNotEmpty($schema['datePublished']);
+        $this->assertSame('Organization', $schema['author']['@type']);
+        $this->assertSame(['https://example.test/uploads/featured.png'], $schema['image']);
+    }
+
     public function test2SeoPressIsDetectedAndWritesItsOwnKeys(): void
     {
         define('SEOPRESS_VERSION', '7.0');

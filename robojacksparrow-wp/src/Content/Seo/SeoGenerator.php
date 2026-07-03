@@ -16,16 +16,58 @@ class SeoGenerator
     private const MAX_TITLE_LENGTH = 60;
     private const MAX_DESCRIPTION_LENGTH = 160;
 
-    public function generate(string $title, string $metaDescription, string $htmlContent): SeoData
+    /**
+     * @param string[] $focusKeywords The article's focus keywords, primary
+     *     one first (see ArticleDraft::getFocusKeywords()). Rank Math/Yoast
+     *     both weigh "focus keyword appears in the SEO title and meta
+     *     description" heavily; the generation prompt now asks the LLM for
+     *     this directly, but ensureKeywordPresent() is a deterministic
+     *     safety net for whenever it doesn't come back that way.
+     */
+    public function generate(string $title, string $metaDescription, string $htmlContent, array $focusKeywords = []): SeoData
     {
-        $seoTitle = $this->truncate($title, self::MAX_TITLE_LENGTH);
-        $description = $this->buildDescription($metaDescription, $htmlContent);
+        $primaryKeyword = trim((string) ($focusKeywords[0] ?? ''));
+
+        $seoTitle = $this->ensureKeywordPresent(
+            $this->truncate($title, self::MAX_TITLE_LENGTH),
+            $primaryKeyword,
+            self::MAX_TITLE_LENGTH
+        );
+
+        $description = $this->ensureKeywordPresent(
+            $this->buildDescription($metaDescription, $htmlContent),
+            $primaryKeyword,
+            self::MAX_DESCRIPTION_LENGTH
+        );
 
         return new SeoData(
             title: $seoTitle,
             description: $description,
             articleSchema: $this->buildArticleSchema($seoTitle, $description)
         );
+    }
+
+    private function ensureKeywordPresent(string $text, string $keyword, int $maxLength): string
+    {
+        if ($keyword === '' || mb_stripos($text, $keyword) !== false) {
+            return $text;
+        }
+
+        $combined = $text . ' - ' . $keyword;
+        if (mb_strlen($combined) <= $maxLength) {
+            return $combined;
+        }
+
+        // No room to append: lead with the keyword instead (truncating the
+        // original text to make space) rather than silently dropping it.
+        $prefix = $keyword . ': ';
+        $available = $maxLength - mb_strlen($prefix);
+
+        if ($available <= 10) {
+            return $this->truncate($keyword, $maxLength);
+        }
+
+        return $prefix . $this->truncate($text, $available);
     }
 
     private function buildDescription(string $metaDescription, string $htmlContent): string

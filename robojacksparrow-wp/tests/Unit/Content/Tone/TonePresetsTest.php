@@ -39,4 +39,28 @@ final class TonePresetsTest extends TestCase
             $this->assertNotSame('', trim(TonePresets::instructionsFor($key)), "preset '{$key}' must have instructions");
         }
     }
+
+    public function testNewsPresetMustStayUnderOneThousandWords(): void
+    {
+        $bounds = TonePresets::wordCountBoundsFor('noticia');
+
+        $this->assertLessThan(1000, $bounds['max']);
+        $this->assertGreaterThan(0, $bounds['min']);
+        $this->assertLessThanOrEqual($bounds['max'], $bounds['default']);
+        $this->assertGreaterThanOrEqual($bounds['min'], $bounds['default']);
+    }
+
+    public function testEveryNonNewsPresetMustStayBetween1500And2500Words(): void
+    {
+        foreach (array_keys(TonePresets::choices()) as $key) {
+            if ($key === 'noticia') {
+                continue;
+            }
+
+            $bounds = TonePresets::wordCountBoundsFor($key);
+
+            $this->assertSame(1500, $bounds['min'], "preset '{$key}' must have a 1500-word floor");
+            $this->assertSame(2500, $bounds['max'], "preset '{$key}' must have a 2500-word ceiling");
+        }
+    }
 }

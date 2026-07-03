@@ -12,6 +12,7 @@ final class PublishRequest
     /**
      * @param string[] $tags
      * @param string[] $focusKeywords
+     * @param BodyImage[] $bodyImages
      */
     public function __construct(
         private string $title,
@@ -24,6 +25,7 @@ final class PublishRequest
         private array $tags = [],
         private ?string $categoryName = null,
         private ?ImageResult $featuredImage = null,
+        private array $bodyImages = [],
         private string $postType = 'post',
         private string $postStatus = 'draft',
         private ?DateTimeImmutable $scheduledAt = null
@@ -84,6 +86,14 @@ final class PublishRequest
     public function getFeaturedImage(): ?ImageResult
     {
         return $this->featuredImage;
+    }
+
+    /**
+     * @return BodyImage[]
+     */
+    public function getBodyImages(): array
+    {
+        return $this->bodyImages;
     }
 
     public function getPostType(): string

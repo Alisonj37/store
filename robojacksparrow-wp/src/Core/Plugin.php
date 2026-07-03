@@ -49,6 +49,7 @@ use RoboJackSparrow\Image\Providers\UnsplashProvider;
 use RoboJackSparrow\Publisher\WordPress\MediaUploader;
 use RoboJackSparrow\Publisher\WordPress\PostPublisher;
 use RoboJackSparrow\Publisher\WordPress\SeoIntegrator;
+use RoboJackSparrow\Publisher\WordPress\StructuredDataRenderer;
 use RoboJackSparrow\Publisher\WordPress\TaxonomyManager;
 use RoboJackSparrow\Queue\Jobs\JobRegistry;
 use RoboJackSparrow\Queue\QueueManager;
@@ -247,6 +248,7 @@ final class Plugin
         $this->jobRegistry->register();
         $this->rssCron->register();
         $this->scraperCron->register();
+        (new StructuredDataRenderer())->register();
 
         add_action('rjs_worker_process', [$this->worker, 'processNextBatch']);
         add_action('init', [$this, 'loadTextdomain']);

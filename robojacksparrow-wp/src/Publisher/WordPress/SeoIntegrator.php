@@ -86,12 +86,42 @@ class SeoIntegrator
         update_post_meta($postId, '_rjs_seo_title', $request->getSeoTitle());
         update_post_meta($postId, '_rjs_seo_description', $request->getSeoDescription());
 
-        if ($request->getSchemaArticle() !== []) {
-            update_post_meta($postId, '_rjs_schema_article', wp_json_encode($request->getSchemaArticle()));
+        $articleSchema = $request->getSchemaArticle();
+        if ($articleSchema !== []) {
+            update_post_meta($postId, '_rjs_schema_article', wp_json_encode($this->enrichArticleSchema($postId, $articleSchema)));
         }
 
         if ($request->getSchemaFaq() !== []) {
             update_post_meta($postId, '_rjs_schema_faq', wp_json_encode($request->getSchemaFaq()));
         }
+    }
+
+    /**
+     * ContentEngine/SeoGenerator build the Article schema before the post
+     * even exists, so it only has headline/description/dateModified - the
+     * fields that actually make Article structured data useful for Google
+     * rich results and AI answer engines (canonical URL, real publish date,
+     * author/publisher, image) all depend on the post that was just
+     * created, so they're filled in here instead.
+     */
+    private function enrichArticleSchema(int $postId, array $schema): array
+    {
+        $permalink = (string) get_permalink($postId);
+
+        $schema['mainEntityOfPage'] = ['@type' => 'WebPage', '@id' => $permalink];
+        $schema['url'] = $permalink;
+        $schema['datePublished'] = (string) get_the_date('c', $postId);
+        $schema['dateModified'] = (string) (get_the_modified_date('c', $postId) ?: $schema['dateModified'] ?? $schema['datePublished']);
+
+        $siteName = (string) get_bloginfo('name');
+        $schema['author'] = ['@type' => 'Organization', 'name' => $siteName];
+        $schema['publisher'] = ['@type' => 'Organization', 'name' => $siteName];
+
+        $imageUrl = get_the_post_thumbnail_url($postId, 'full');
+        if (is_string($imageUrl) && $imageUrl !== '') {
+            $schema['image'] = [$imageUrl];
+        }
+
+        return $schema;
     }
 }

@@ -13,7 +13,28 @@ use RoboJackSparrow\Publisher\PublisherException;
  */
 class MediaUploader
 {
-    public function attachFeaturedImage(int $postId, ImageResult $image, string $title): int
+    public function attachFeaturedImage(int $postId, ImageResult $image, string $title, string $altText = ''): int
+    {
+        $attachmentId = $this->upload($postId, $image, $title, $altText !== '' ? $altText : $title);
+
+        set_post_thumbnail($postId, $attachmentId);
+
+        return $attachmentId;
+    }
+
+    /**
+     * Uploads an in-body image (not the featured one) to the media library
+     * and returns its public URL, for substituting a content placeholder
+     * token - see ContentEngine::planBodyImages()/PostPublisher.
+     */
+    public function uploadInlineImage(int $postId, ImageResult $image, string $title, string $altText): string
+    {
+        $attachmentId = $this->upload($postId, $image, $title, $altText);
+
+        return (string) wp_get_attachment_url($attachmentId);
+    }
+
+    private function upload(int $postId, ImageResult $image, string $title, string $altText): int
     {
         require_once ABSPATH . 'wp-admin/includes/image.php';
         require_once ABSPATH . 'wp-admin/includes/file.php';
@@ -46,7 +67,12 @@ class MediaUploader
 
         $this->applyAttribution($attachmentId, $image);
 
-        set_post_thumbnail($postId, $attachmentId);
+        // Rank Math/Yoast and basic accessibility both check for image alt
+        // text - previously never set, meaning every generated image failed
+        // that check regardless of anything else about the article.
+        if (trim($altText) !== '') {
+            update_post_meta($attachmentId, '_wp_attachment_image_alt', $altText);
+        }
 
         return $attachmentId;
     }

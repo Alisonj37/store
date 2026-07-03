@@ -98,6 +98,7 @@ class Schema
             assigned_tone          VARCHAR(20) NULL,
             assigned_image_source  VARCHAR(20) NOT NULL DEFAULT 'auto',
             image_prompt           LONGTEXT NULL,
+            body_image_prompts     JSON NULL,
             featured_image_id      BIGINT UNSIGNED NULL,
             featured_image_url     VARCHAR(500) NULL,
             seo_title              VARCHAR(200) NULL,

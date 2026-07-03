@@ -4,9 +4,11 @@ declare(strict_types=1);
 
 namespace RoboJackSparrow\Tests\Unit\Publisher;
 
+use RoboJackSparrow\Content\ContentEngine;
 use RoboJackSparrow\Core\Logger;
 use RoboJackSparrow\Image\Dto\ImageAttribution;
 use RoboJackSparrow\Image\Dto\ImageResult;
+use RoboJackSparrow\Publisher\Dto\BodyImage;
 use RoboJackSparrow\Publisher\Dto\PublishRequest;
 use RoboJackSparrow\Publisher\PublisherException;
 use RoboJackSparrow\Publisher\WordPress\MediaUploader;
@@ -128,5 +130,54 @@ final class PostPublisherTest extends TestCase
         $this->assertGreaterThan(0, $result->getPostId(), 'the post itself must still be published');
         $this->assertNull($result->getFeaturedImageId());
         $this->assertSame('S', $this->wpdb->postMeta[$result->getPostId()]['_rjs_seo_title'], 'SEO must still be applied after the image failure');
+    }
+
+    public function testBodyImagePlaceholderIsReplacedWithARealImgTagPointingAtTheUploadedAttachment(): void
+    {
+        $token = 'RJS_BODY_IMAGE_0';
+        $content = '<h2>Secao</h2><p>Texto.</p>' . ContentEngine::placeholderFor($token);
+
+        $request = new PublishRequest(
+            title: 'T',
+            htmlContent: $content,
+            seoTitle: 'S',
+            seoDescription: 'D',
+            bodyImages: [new BodyImage($token, $this->featuredImage(), 'Uma secao ilustrada')]
+        );
+
+        $result = $this->makePublisher()->publish($request);
+        $stored = $this->wpdb->posts[$result->getPostId()];
+
+        $this->assertStringNotContainsString('<!--RJS_BODY_IMAGE_0-->', $stored['post_content']);
+        $this->assertStringContainsString('<img src="https://example.test/uploads/', $stored['post_content']);
+        $this->assertStringContainsString('alt="Uma secao ilustrada"', $stored['post_content']);
+    }
+
+    public function testUnresolvedBodyImagePlaceholdersAreStrippedRatherThanPublishedAsBrokenComments(): void
+    {
+        // Simulates the generate_image job failing before any body image
+        // was even attempted (e.g. every image provider down) - the
+        // placeholder token still made it into generated_content, but no
+        // BodyImage ever arrives to fill it in.
+        $content = '<h2>Secao</h2><p>Texto.</p>' . ContentEngine::placeholderFor('RJS_BODY_IMAGE_0');
+        $request = new PublishRequest('T', $content, 'S', 'D');
+
+        $result = $this->makePublisher()->publish($request);
+        $stored = $this->wpdb->posts[$result->getPostId()];
+
+        $this->assertStringNotContainsString('RJS_BODY_IMAGE_0', $stored['post_content']);
+    }
+
+    public function testBodyImageUploadFailureDropsOnlyThatPlaceholderWithoutFailingThePublish(): void
+    {
+        $token = 'RJS_BODY_IMAGE_0';
+        $content = '<p>Texto.</p>' . ContentEngine::placeholderFor($token);
+        $this->wpdb->uploadFailureMessage = 'Disk quota exceeded';
+
+        $request = new PublishRequest('T', $content, 'S', 'D', bodyImages: [new BodyImage($token, $this->featuredImage(), 'alt')]);
+        $result = $this->makePublisher()->publish($request);
+
+        $this->assertGreaterThan(0, $result->getPostId());
+        $this->assertStringNotContainsString($token, $this->wpdb->posts[$result->getPostId()]['post_content']);
     }
 }

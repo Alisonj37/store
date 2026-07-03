@@ -424,6 +424,7 @@ class wpdb
         $this->postTags = [];
         $this->categories = [];
         $this->thumbnails = [];
+        $this->attachmentUrls = [];
         $this->insert_id = 0;
         $this->uploadFailureMessage = '';
         $this->forceInsertPostFailure = false;
@@ -596,6 +597,14 @@ class wpdb
         return $id;
     }
 
+    public function updatePost(array $data): void
+    {
+        $id = (int) ($data['ID'] ?? 0);
+        if ($id > 0 && isset($this->posts[$id])) {
+            $this->posts[$id] = array_merge($this->posts[$id], $data);
+        }
+    }
+
     public function getTermByName(string $name)
     {
         return isset($this->categories[$name]) ? (object) ['term_id' => $this->categories[$name]] : false;
@@ -649,6 +658,9 @@ class wpdb
 
     public bool $throwTypeErrorOnAttachment = false;
 
+    /** @var array<int, string> attachment id => public URL, for wp_get_attachment_url() */
+    public array $attachmentUrls = [];
+
     public function insertAttachment(array $data, string $file, int $postId): int
     {
         if ($this->throwTypeErrorOnAttachment) {
@@ -659,7 +671,10 @@ class wpdb
             throw new \TypeError('Simulated malformed attachment data');
         }
 
-        return $this->nextAttachmentId++;
+        $id = $this->nextAttachmentId++;
+        $this->attachmentUrls[$id] = 'https://example.test/uploads/' . basename($file);
+
+        return $id;
     }
 
     public function setPostThumbnail(int $postId, int $attachmentId): void

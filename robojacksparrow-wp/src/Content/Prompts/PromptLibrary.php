@@ -31,10 +31,21 @@ Conteudo: {{content}}
 Pesquisa factual verificada (use para checar fatos e enriquecer o angulo, nao copie literalmente):
 {{research_briefing}}
 
-Escreva um artigo ORIGINAL de aproximadamente {{word_count}} palavras, otimizado para SEO, organizado em
-secoes com subtitulos (H2 ou H3), cada uma com paragrafos <p> e listas <ul>/<ol> quando fizer sentido.
-Inclua tambem de 3 a 6 perguntas frequentes (FAQ) baseadas no conteudo do artigo que voce escreveu, com
-respostas curtas e diretas.
+REGRA DE TAMANHO - OBRIGATORIA: o artigo tem que ter NO MINIMO {{min_word_count}} e NO MAXIMO {{max_word_count}}
+palavras no total, somando todas as secoes (nao conte o FAQ nesse total). Isso nao e uma sugestao aproximada -
+NUNCA entregue um artigo com menos de {{min_word_count}} palavras. Mire em aproximadamente {{target_word_count}}
+palavras dentro desse intervalo. Se o assunto parecer curto, aprofunde com mais contexto, exemplos, implicacoes
+praticas e detalhes relevantes ate atingir o minimo exigido, escreva secoes adicionais (H2/H3) se for preciso
+para atingir o tamanho.
+
+Escreva um artigo ORIGINAL, otimizado para SEO, organizado em secoes com subtitulos (H2 ou H3), cada uma com
+paragrafos <p> e listas <ul>/<ol> quando fizer sentido. Inclua tambem de 3 a 6 perguntas frequentes (FAQ)
+baseadas no conteudo do artigo que voce escreveu, com respostas curtas e diretas.
+
+REGRA DE SEO - PALAVRA-CHAVE DE FOCO: escolha uma unica palavra-chave de foco principal para o artigo (a mais
+relevante para busca) e garanta que ela apareca literalmente: no titulo (title), na meta descricao
+(meta_description), no primeiro paragrafo do artigo, e em pelo menos um subtitulo (H2). Coloque essa
+palavra-chave de foco como o PRIMEIRO item da lista focus_keywords.
 
 Responda APENAS com um JSON valido, sem texto adicional e sem blocos de codigo markdown, no formato exato:
 

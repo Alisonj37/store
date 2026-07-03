@@ -249,6 +249,14 @@ function wp_insert_post($data, $wpError = false)
     return $wpdb->insertPost($data);
 }
 
+function wp_update_post($data)
+{
+    global $wpdb;
+    $wpdb->updatePost($data);
+
+    return (int) ($data['ID'] ?? 0);
+}
+
 function get_permalink($postId) { return "https://example.test/?p={$postId}"; }
 function admin_url($path = '') { return 'https://example.test/wp-admin/' . ltrim((string) $path, '/'); }
 function get_edit_post_link($postId) { return admin_url('post.php?post=' . (int) $postId . '&action=edit'); }
@@ -342,6 +350,13 @@ function wp_insert_attachment($data, $file, $postId)
 function wp_generate_attachment_metadata($attachmentId, $file) { return ['width' => 20, 'height' => 20]; }
 function wp_update_attachment_metadata($attachmentId, $metadata) { return true; }
 
+function wp_get_attachment_url($attachmentId)
+{
+    global $wpdb;
+
+    return $wpdb->attachmentUrls[$attachmentId] ?? '';
+}
+
 function set_post_thumbnail($postId, $attachmentId)
 {
     global $wpdb;
@@ -356,6 +371,28 @@ function update_post_meta($postId, $key, $value)
     $wpdb->updatePostMeta($postId, $key, $value);
 
     return true;
+}
+
+function get_post_meta($postId, $key = '', $single = false)
+{
+    global $wpdb;
+    $value = $wpdb->postMeta[$postId][$key] ?? ($single ? '' : []);
+
+    return $single ? $value : (is_array($value) ? $value : [$value]);
+}
+
+function is_singular() { return true; }
+function get_the_ID() { return $GLOBALS['__rjs_current_post_id'] ?? 0; }
+function get_the_date($format, $postId) { return gmdate($format === 'c' ? 'c' : $format, strtotime('2026-01-01 00:00:00')); }
+function get_the_modified_date($format, $postId) { return gmdate($format === 'c' ? 'c' : $format, strtotime('2026-01-02 00:00:00')); }
+function get_bloginfo($key = '') { return $key === 'name' ? 'Example Site' : ''; }
+
+function get_the_post_thumbnail_url($postId, $size = 'full')
+{
+    global $wpdb;
+    $attachmentId = $wpdb->thumbnails[$postId] ?? null;
+
+    return $attachmentId !== null ? ($wpdb->attachmentUrls[$attachmentId] ?? false) : false;
 }
 
 require __DIR__ . '/FakeWpdb.php';

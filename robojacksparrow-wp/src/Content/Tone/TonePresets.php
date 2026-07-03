@@ -101,4 +101,21 @@ final class TonePresets
     {
         return self::PRESETS[$preset]['instructions'] ?? self::PRESETS[self::DEFAULT_PRESET]['instructions'];
     }
+
+    /**
+     * Business rule: a "noticia" (news/jornalistico) article is expected to
+     * be a short, factual report and must come out under 1000 words; every
+     * other niche is a fuller piece and must land in the 1500-2500 range.
+     * This is a hard rule, not a suggestion - it overrides whatever the
+     * free-text rjs_target_word_count setting says, clamping it into
+     * whichever bound applies to the tone actually used for the article.
+     *
+     * @return array{min: int, max: int, default: int}
+     */
+    public static function wordCountBoundsFor(string $preset): array
+    {
+        return $preset === 'noticia'
+            ? ['min' => 400, 'max' => 999, 'default' => 800]
+            : ['min' => 1500, 'max' => 2500, 'default' => 2000];
+    }
 }

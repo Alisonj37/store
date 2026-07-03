@@ -70,6 +70,38 @@ final class ProvidersTest extends TestCase
         $this->assertSame(40, $response->getTokensUsed());
     }
 
+    public function testReasoningModelsUseMaxCompletionTokensAndOmitTemperature(): void
+    {
+        $capturedBody = null;
+        HttpFixtures::setPrefix('POST', 'https://api.openai.com/v1/chat/completions', function ($url, $args) use (&$capturedBody) {
+            $capturedBody = json_decode($args['body'], true);
+
+            return $this->chatCompletionFixture('ok', 'gpt-5.4-mini');
+        });
+
+        (new OpenAIProvider('sk-test', 'gpt-5.4-mini'))->send($this->request);
+
+        $this->assertArrayHasKey('max_completion_tokens', $capturedBody, 'reasoning models require max_completion_tokens, not max_tokens');
+        $this->assertArrayNotHasKey('max_tokens', $capturedBody);
+        $this->assertArrayNotHasKey('temperature', $capturedBody, 'reasoning models reject a custom temperature');
+    }
+
+    public function testClassicModelsStillUseMaxTokensAndTemperature(): void
+    {
+        $capturedBody = null;
+        HttpFixtures::setPrefix('POST', 'https://api.openai.com/v1/chat/completions', function ($url, $args) use (&$capturedBody) {
+            $capturedBody = json_decode($args['body'], true);
+
+            return $this->chatCompletionFixture('ok', 'gpt-4o-mini');
+        });
+
+        (new OpenAIProvider('sk-test', 'gpt-4o-mini'))->send($this->request);
+
+        $this->assertArrayHasKey('max_tokens', $capturedBody);
+        $this->assertArrayHasKey('temperature', $capturedBody);
+        $this->assertArrayNotHasKey('max_completion_tokens', $capturedBody);
+    }
+
     public function testEmptyApiKeyIsRejectedWithoutAnyHttpCall(): void
     {
         $this->expectException(LLMException::class);

@@ -10,6 +10,10 @@ final class GeneratedContent
      * @param array<int, array{title: string, level: int, html: string, word_count: int, tokens: int}> $sections
      * @param Faq[] $faqs
      * @param string[] $focusKeywords
+     * @param array<int, array{token: string, prompt: string, alt: string}> $bodyImagePrompts
+     *     Placeholder tokens embedded in htmlContent (e.g. "<!--RJS_BODY_IMAGE_0-->")
+     *     with the image prompt/alt text to fill each one in once generated -
+     *     see ContentEngine::planBodyImages().
      */
     public function __construct(
         private string $title,
@@ -22,7 +26,8 @@ final class GeneratedContent
         private array $faqs,
         private array $sections,
         private ?string $imagePrompt,
-        private int $tokensUsed
+        private int $tokensUsed,
+        private array $bodyImagePrompts = []
     ) {
     }
 
@@ -83,6 +88,14 @@ final class GeneratedContent
     public function getImagePrompt(): ?string
     {
         return $this->imagePrompt;
+    }
+
+    /**
+     * @return array<int, array{token: string, prompt: string, alt: string}>
+     */
+    public function getBodyImagePrompts(): array
+    {
+        return $this->bodyImagePrompts;
     }
 
     /**

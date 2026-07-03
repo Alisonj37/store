@@ -13,6 +13,7 @@ use RoboJackSparrow\Image\Dto\ImageAttribution;
 use RoboJackSparrow\Image\Dto\ImageRequest;
 use RoboJackSparrow\Image\Dto\ImageResult;
 use RoboJackSparrow\Image\ImageEngine;
+use RoboJackSparrow\Publisher\Dto\BodyImage;
 use RoboJackSparrow\Publisher\Dto\PublishRequest;
 use RoboJackSparrow\Publisher\WordPress\PostPublisher;
 use RoboJackSparrow\Queue\Job;
@@ -119,6 +120,7 @@ class JobRegistry
             'faq_schema'          => wp_json_encode($generated->getSchemaFaq()),
             'tags'                => wp_json_encode($generated->getFocusKeywords()),
             'image_prompt'        => $generated->getImagePrompt(),
+            'body_image_prompts'  => wp_json_encode($generated->getBodyImagePrompts()),
             'content_tokens_used' => $generated->getTokensUsed(),
             'status'              => 'queued_image',
         ]);
@@ -139,21 +141,21 @@ class JobRegistry
 
         $payload = $job->getPayload();
         $prompt = trim((string) ($payload['image_prompt'] ?? ''));
+        $preferredSource = $this->articleOverride($article->assigned_image_source ?? null);
+        $bodyImagesPayload = $this->generateBodyImagesPayload($job->getArticleId(), $article, $preferredSource);
 
         if ($prompt === '') {
-            // Nothing to generate an image from: skip straight to publish
-            // without a featured image rather than failing the whole article.
+            // Nothing to generate a featured image from: skip straight to
+            // publish without one rather than failing the whole article -
+            // any body images that did generate are still worth keeping.
             $this->articles->update($job->getArticleId(), ['status' => 'queued_publish']);
-            $this->queue->enqueue($job->getArticleId(), 'publish', []);
+            $this->queue->enqueue($job->getArticleId(), 'publish', ['body_images' => $bodyImagesPayload]);
 
             return true;
         }
 
         try {
-            $result = $this->image->generate(
-                new ImageRequest($prompt),
-                $this->articleOverride($article->assigned_image_source ?? null)
-            );
+            $result = $this->image->generate(new ImageRequest($prompt), $preferredSource);
         } catch (Throwable $e) {
             // Every image provider failed (e.g. no API keys configured yet).
             // An article without a featured image is still a published
@@ -165,7 +167,7 @@ class JobRegistry
             ]);
 
             $this->articles->update($job->getArticleId(), ['status' => 'queued_publish']);
-            $this->queue->enqueue($job->getArticleId(), 'publish', []);
+            $this->queue->enqueue($job->getArticleId(), 'publish', ['body_images' => $bodyImagesPayload]);
 
             return true;
         }
@@ -178,6 +180,7 @@ class JobRegistry
             'image_source_url'  => $result->getSourceUrl(),
             'image_author'      => $result->getAttribution()->getAuthorName(),
             'image_source_name' => $result->getAttribution()->getSourceName(),
+            'body_images'       => $bodyImagesPayload,
         ]);
 
         return true;
@@ -211,6 +214,7 @@ class JobRegistry
             tags: $this->decodeJsonColumn($article->tags ?? null),
             categoryName: $article->category_name ?? null,
             featuredImage: $this->buildFeaturedImage($job->getPayload()),
+            bodyImages: $this->buildBodyImages($job->getPayload()),
             postType: (string) ($article->custom_post_type ?? 'post'),
             postStatus: $postStatus,
             scheduledAt: $scheduledAt
@@ -238,6 +242,97 @@ class JobRegistry
         $parsed = DateTimeImmutable::createFromFormat('Y-m-d H:i:s', $value);
 
         return $parsed !== false ? $parsed : null;
+    }
+
+    /**
+     * Generates every planned in-body image (ContentEngine::planBodyImages())
+     * one at a time. Each is independent of the others and of the featured
+     * image: a failure on one just means that section's placeholder gets
+     * stripped at publish time (see PostPublisher) instead of failing the
+     * whole article - the same graceful-degradation approach already used
+     * for the featured image.
+     *
+     * @return array<string, array{base64: string, mime: string, provider: string, source_url: ?string, author: ?string, source_name: ?string, alt: string}>
+     */
+    private function generateBodyImagesPayload(int $articleId, object $article, ?string $preferredSource): array
+    {
+        $plan = $this->decodeJsonColumn($article->body_image_prompts ?? null);
+        $results = [];
+
+        foreach ($plan as $entry) {
+            $token = (string) ($entry['token'] ?? '');
+            $prompt = trim((string) ($entry['prompt'] ?? ''));
+            if ($token === '' || $prompt === '') {
+                continue;
+            }
+
+            try {
+                $result = $this->image->generate(new ImageRequest($prompt), $preferredSource);
+            } catch (Throwable $e) {
+                $this->logger->warning('Body image provider failed, dropping that image placeholder', [
+                    'article_id' => $articleId,
+                    'token'      => $token,
+                    'error'      => $e->getMessage(),
+                ]);
+
+                continue;
+            }
+
+            $results[$token] = [
+                'base64'      => base64_encode($result->getBinaryData()),
+                'mime'        => $result->getMimeType(),
+                'provider'    => $result->getProvider(),
+                'source_url'  => $result->getSourceUrl(),
+                'author'      => $result->getAttribution()->getAuthorName(),
+                'source_name' => $result->getAttribution()->getSourceName(),
+                'alt'         => (string) ($entry['alt'] ?? ''),
+            ];
+        }
+
+        return $results;
+    }
+
+    /**
+     * @param array<string, mixed> $payload
+     * @return BodyImage[]
+     */
+    private function buildBodyImages(array $payload): array
+    {
+        $entries = $payload['body_images'] ?? [];
+        if (!is_array($entries)) {
+            return [];
+        }
+
+        $bodyImages = [];
+        foreach ($entries as $token => $entry) {
+            if (!is_array($entry) || !isset($entry['base64'])) {
+                continue;
+            }
+
+            $binary = base64_decode((string) $entry['base64'], true);
+            if ($binary === false) {
+                $this->logger->warning('Could not decode body image payload for publish job', ['token' => $token]);
+
+                continue;
+            }
+
+            $bodyImages[] = new BodyImage(
+                token: (string) $token,
+                image: new ImageResult(
+                    binaryData: $binary,
+                    mimeType: (string) ($entry['mime'] ?? 'image/png'),
+                    provider: (string) ($entry['provider'] ?? ''),
+                    attribution: new ImageAttribution(
+                        authorName: $entry['author'] ?? null,
+                        sourceName: $entry['source_name'] ?? null
+                    ),
+                    sourceUrl: $entry['source_url'] ?? null
+                ),
+                altText: (string) ($entry['alt'] ?? '')
+            );
+        }
+
+        return $bodyImages;
     }
 
     private function buildFeaturedImage(array $payload): ?ImageResult

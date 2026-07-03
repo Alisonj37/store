@@ -106,6 +106,15 @@ final class JobRegistryTest extends TestCase
         // Every job in the chain must have completed, none stuck/failed.
         $statuses = array_column($this->wpdb->queueRows, 'status');
         $this->assertSame(['completed', 'completed', 'completed', 'completed'], $statuses);
+
+        // The single H2 section FakeLlmProvider returns must have gotten an
+        // in-body image, actually substituted in the published post content
+        // (not just planned and forgotten) - proves the whole
+        // ContentEngine -> JobRegistry -> PostPublisher pipeline for body
+        // images is wired end to end, not just at each unit in isolation.
+        $publishedContent = $this->wpdb->posts[$article->wordpress_post_id]['post_content'];
+        $this->assertStringNotContainsString('RJS_BODY_IMAGE', $publishedContent, 'no raw placeholder token may leak into the published post');
+        $this->assertStringContainsString('<img src=', $publishedContent);
     }
 
     public function testArticleLevelProviderOverridesAreHonoredForContentAndImage(): void
@@ -287,7 +296,7 @@ final class JobRegistryTest extends TestCase
         $this->assertCount(1, $this->wpdb->queueRows);
         $publishJob = reset($this->wpdb->queueRows);
         $this->assertSame('publish', $publishJob['job_type']);
-        $this->assertSame([], json_decode((string) $publishJob['job_payload'], true), 'no image data must be carried into the publish job');
+        $this->assertSame(['body_images' => []], json_decode((string) $publishJob['job_payload'], true), 'no featured image data (and no body_image_prompts were planned) must be carried into the publish job');
     }
 
     public function testHandlePublishUsesDraftStatusFromArticleOverride(): void

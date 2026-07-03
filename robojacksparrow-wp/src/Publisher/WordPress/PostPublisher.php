@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace RoboJackSparrow\Publisher\WordPress;
 
 use DateTimeZone;
+use RoboJackSparrow\Content\ContentEngine;
 use RoboJackSparrow\Core\Logger;
 use RoboJackSparrow\Publisher\Dto\PublishRequest;
 use RoboJackSparrow\Publisher\Dto\PublishResult;
@@ -36,6 +37,11 @@ class PostPublisher
 
         $postData = [
             'post_title'    => wp_strip_all_tags($request->getTitle()),
+            // Body-image placeholder tokens (see ContentEngine::planBodyImages())
+            // are still in here as plain HTML comments at insert time - each
+            // image needs a postId to attach to, which doesn't exist until
+            // after wp_insert_post() runs, so substitution happens below and
+            // is written back with a follow-up wp_update_post().
             'post_content'  => $request->getHtmlContent(),
             'post_status'   => $request->getPostStatus(),
             'post_type'     => $request->getPostType(),
@@ -59,6 +65,8 @@ class PostPublisher
         $this->taxonomy->assignTags($postId, $request->getTags());
 
         $featuredImageId = $this->tryAttachFeaturedImage($postId, $request);
+
+        $this->resolveBodyImages($postId, $request);
 
         $this->seo->apply($postId, $request);
 
@@ -85,8 +93,10 @@ class PostPublisher
             return null;
         }
 
+        $altText = $request->getFocusKeywords()[0] ?? $request->getTitle();
+
         try {
-            return $this->media->attachFeaturedImage($postId, $image, $request->getTitle());
+            return $this->media->attachFeaturedImage($postId, $image, $request->getTitle(), $altText);
         } catch (Throwable $e) {
             $this->logger->warning('Failed to attach featured image, publishing without one', [
                 'post_id' => $postId,
@@ -94,6 +104,63 @@ class PostPublisher
             ]);
 
             return null;
+        }
+    }
+
+    /**
+     * Uploads each in-body image and swaps its placeholder token (embedded
+     * directly in the HTML by ContentEngine::planBodyImages()) for a real
+     * <img> tag pointing at the uploaded attachment. Any image that failed
+     * to generate/upload just has its placeholder token stripped instead of
+     * leaving a broken comment (or, worse, failing the whole publish) - the
+     * same graceful-degradation approach as the featured image.
+     */
+    private function resolveBodyImages(int $postId, PublishRequest $request): void
+    {
+        $content = $request->getHtmlContent();
+        if (!str_contains($content, '<!--RJS_BODY_IMAGE_')) {
+            return;
+        }
+
+        $changed = false;
+
+        foreach ($request->getBodyImages() as $bodyImage) {
+            $placeholder = ContentEngine::placeholderFor($bodyImage->getToken());
+
+            if (!str_contains($content, $placeholder)) {
+                continue;
+            }
+
+            try {
+                $url = $this->media->uploadInlineImage($postId, $bodyImage->getImage(), $request->getTitle(), $bodyImage->getAltText());
+                $imgTag = sprintf(
+                    '<img src="%s" alt="%s" loading="lazy" />',
+                    esc_url($url),
+                    esc_attr($bodyImage->getAltText())
+                );
+                $content = str_replace($placeholder, $imgTag, $content);
+                $changed = true;
+            } catch (Throwable $e) {
+                $this->logger->warning('Failed to upload a body image, dropping its placeholder', [
+                    'post_id' => $postId,
+                    'token'   => $bodyImage->getToken(),
+                    'error'   => $e->getMessage(),
+                ]);
+
+                $content = str_replace($placeholder, '', $content);
+                $changed = true;
+            }
+        }
+
+        // Strip any placeholder left over from an image that never even
+        // reached this method (e.g. the whole generate_image job failed
+        // before any body image was attempted) so a bare HTML comment never
+        // ships in the published post.
+        $content = (string) preg_replace('/<!--RJS_BODY_IMAGE_\d+-->/', '', $content, -1, $count);
+        $changed = $changed || $count > 0;
+
+        if ($changed) {
+            wp_update_post(['ID' => $postId, 'post_content' => $content]);
         }
     }
 }
