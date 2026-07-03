@@ -33,6 +33,7 @@ use RoboJackSparrow\Content\Outline\OutlineGenerator;
 use RoboJackSparrow\Content\Prompts\PromptLibrary;
 use RoboJackSparrow\Content\Seo\SeoGenerator;
 use RoboJackSparrow\Cron\CronManager;
+use RoboJackSparrow\Cron\Handlers\RssCron;
 use RoboJackSparrow\Database\Repositories\ArticleRepository;
 use RoboJackSparrow\Database\Repositories\LogRepository;
 use RoboJackSparrow\Database\Repositories\QueueRepository as QueueRepositoryModel;
@@ -56,6 +57,7 @@ use RoboJackSparrow\Research\ResearchEngine;
 use RoboJackSparrow\Research\TavilyDriver;
 use RoboJackSparrow\Scraper\Drivers\FirecrawlDriver;
 use RoboJackSparrow\Scraper\Drivers\JinaAiDriver;
+use RoboJackSparrow\Scraper\Rss\RssParser;
 use RoboJackSparrow\Scraper\ScraperEngine;
 
 final class Plugin
@@ -68,6 +70,7 @@ final class Plugin
     private CronManager $cronManager;
     private RestApi $restApi;
     private JobRegistry $jobRegistry;
+    private RssCron $rssCron;
     private ?Admin $admin = null;
 
     public static function instance(): self
@@ -90,6 +93,13 @@ final class Plugin
 
         $this->restApi = $this->buildRestApi($settings);
         $this->jobRegistry = $this->buildJobRegistry($settings);
+        $this->rssCron = new RssCron(
+            new SourceRepository(),
+            new RssParser(),
+            new ArticleRepository(),
+            $this->queueManager,
+            $this->logger
+        );
 
         $this->registerHooks();
 
@@ -151,10 +161,8 @@ final class Plugin
         ];
         $llmRouter = new LLMRouter($llmProviders, $health, $this->logger);
 
-        // JinaAiDriver works keyless (lower rate limit); Firecrawl requires
-        // rjs_firecrawl_api_key, which is not yet exposed on the API Keys
-        // admin page (Fase 8 only lists the keys explicitly requested
-        // there) - the cascade still works via Jina alone until it is added.
+        // JinaAiDriver works keyless (lower rate limit); Firecrawl is the
+        // fallback and uses rjs_firecrawl_api_key from the API Keys page.
         $scraperEngine = new ScraperEngine(
             [
                 new JinaAiDriver(),
@@ -213,6 +221,7 @@ final class Plugin
         $this->cronManager->register();
         $this->restApi->register();
         $this->jobRegistry->register();
+        $this->rssCron->register();
 
         add_action('rjs_worker_process', [$this->worker, 'processNextBatch']);
         add_action('init', [$this, 'loadTextdomain']);

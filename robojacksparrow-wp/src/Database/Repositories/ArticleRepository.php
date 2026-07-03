@@ -51,11 +51,34 @@ class ArticleRepository
         return $row instanceof \stdClass ? $row : null;
     }
 
+    public function create(array $data): int
+    {
+        $data['created_at'] = current_time('mysql');
+        $data['updated_at'] = current_time('mysql');
+
+        $this->db->insert($this->table, $data);
+
+        return (int) $this->db->insert_id;
+    }
+
     public function update(int $id, array $data): bool
     {
         $data['updated_at'] = current_time('mysql');
 
         return (bool) $this->db->update($this->table, $data, ['id' => $id]);
+    }
+
+    /**
+     * Used by RSS collection to avoid creating a duplicate article for a
+     * feed item that was already imported on a previous run.
+     */
+    public function existsBySourceUrl(string $url): bool
+    {
+        $id = $this->db->get_var(
+            $this->db->prepare("SELECT id FROM {$this->table} WHERE source_url = %s LIMIT 1", $url)
+        );
+
+        return $id !== null;
     }
 
     public function count(?string $status = null): int

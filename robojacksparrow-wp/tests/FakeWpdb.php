@@ -115,6 +115,17 @@ class wpdb
             return $this->countRows($this->articles, str_contains($query, 'WHERE') ? ($this->lastPrepareArgs[0] ?? null) : null, 'status');
         }
 
+        if (str_contains($query, 'rjs_articles') && str_contains($query, 'SELECT id') && str_contains($query, 'source_url')) {
+            $url = $this->lastPrepareArgs[0] ?? null;
+            foreach ($this->articles as $row) {
+                if (($row['source_url'] ?? null) === $url) {
+                    return $row['id'];
+                }
+            }
+
+            return null;
+        }
+
         if (str_contains($query, 'rjs_queue') && str_contains($query, 'COUNT(*)')) {
             return $this->countRows($this->queueRows, str_contains($query, 'WHERE') ? ($this->lastPrepareArgs[0] ?? null) : null, 'status');
         }

@@ -17,6 +17,7 @@ class ApiKeysPage
         'rjs_tavily_api_key'    => 'Tavily (pesquisa em tempo real)',
         'rjs_kei_api_key'       => 'kei.ia (imagens - provider principal)',
         'rjs_replicate_api_key' => 'Replicate (imagens - fallback)',
+        'rjs_firecrawl_api_key' => 'Firecrawl (scraper - fallback do Jina.ai)',
         'rjs_openai_api_key'    => 'OpenAI',
         'rjs_anthropic_api_key' => 'Anthropic',
         'rjs_groq_api_key'      => 'Groq',
