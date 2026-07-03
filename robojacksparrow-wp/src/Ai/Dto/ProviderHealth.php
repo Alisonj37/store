@@ -11,7 +11,8 @@ final class ProviderHealth
         private string $status,
         private int $avgLatencyMs,
         private float $successRate24h,
-        private int $consecutiveFailures
+        private int $consecutiveFailures,
+        private ?string $lastCheck = null
     ) {
     }
 
@@ -39,5 +40,11 @@ final class ProviderHealth
     public function getConsecutiveFailures(): int
     {
         return $this->consecutiveFailures;
+    }
+
+    /** MySQL datetime (UTC) of the last health check, or null if never checked. */
+    public function getLastCheck(): ?string
+    {
+        return $this->lastCheck;
     }
 }

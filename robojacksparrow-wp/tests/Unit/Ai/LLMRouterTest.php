@@ -52,6 +52,37 @@ final class LLMRouterTest extends TestCase
         }
     }
 
+    /**
+     * Before the cooldown was added, a 'down' provider was skipped by
+     * rankProviders() forever - recordSuccess() (the only thing that clears
+     * 'down') can never run for a provider that's never tried again. If
+     * every configured provider ever crossed the failure threshold (e.g.
+     * during initial setup with a bad key, now fixed), every single
+     * generation would fail immediately with "No LLM providers available",
+     * with no way to recover short of manually clearing the DB row. Once
+     * enough time has passed since the last check, it must get a probe
+     * attempt again.
+     */
+    public function testDownProviderGetsRetriedAfterTheCooldownWindowElapses(): void
+    {
+        $health = new HealthMonitor();
+        $bad = new FakeLLMProvider('bad', shouldFail: false);
+
+        for ($i = 0; $i < 5; $i++) {
+            $health->recordFailure('bad', 'boom');
+        }
+        $this->assertSame('down', $health->getStatus('bad')->getStatus());
+
+        // Simulate the cooldown window having elapsed since the last check.
+        $this->wpdb->llmHealth['bad']['last_check'] = gmdate('Y-m-d H:i:s', time() - 700);
+
+        $router = new LLMRouter(['bad' => $bad], $health, new Logger());
+        $response = $router->route(new LLMRequest('hi'));
+
+        $this->assertSame('bad', $response->getProvider(), 'the provider must be probed again once the cooldown elapses');
+        $this->assertSame(1, $bad->calls);
+    }
+
     public function testPreferredProviderBonusWinsOverArrayOrder(): void
     {
         $p1 = new FakeLLMProvider('p1', shouldFail: false);

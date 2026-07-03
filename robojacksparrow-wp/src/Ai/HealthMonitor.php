@@ -47,7 +47,7 @@ class HealthMonitor
         if ($row === null) {
             // Never checked before: assume healthy so it gets a fair chance
             // to be selected by the router instead of being skipped forever.
-            return new ProviderHealth($provider, 'healthy', 0, 100.0, 0);
+            return new ProviderHealth($provider, 'healthy', 0, 100.0, 0, null);
         }
 
         return new ProviderHealth(
@@ -55,7 +55,8 @@ class HealthMonitor
             (string) $row->status,
             (int) $row->avg_latency_ms,
             $row->success_rate_24h !== null ? (float) $row->success_rate_24h : 100.0,
-            (int) $row->consecutive_failures
+            (int) $row->consecutive_failures,
+            isset($row->last_check) ? (string) $row->last_check : null
         );
     }
 
@@ -69,7 +70,7 @@ class HealthMonitor
 
         $this->upsert($provider, [
             'status'               => 'healthy',
-            'last_check'           => current_time('mysql'),
+            'last_check'           => current_time('mysql', true),
             'last_success'         => current_time('mysql'),
             'avg_latency_ms'       => $newAvgLatency,
             'success_rate_24h'     => min(100.0, $current->getSuccessRate24h() + 1.0),
@@ -91,7 +92,7 @@ class HealthMonitor
 
         $this->upsert($provider, [
             'status'               => $status,
-            'last_check'           => current_time('mysql'),
+            'last_check'           => current_time('mysql', true),
             'last_error'           => $errorMessage,
             'success_rate_24h'     => max(0.0, $current->getSuccessRate24h() - 5.0),
             'consecutive_failures' => $consecutiveFailures,
