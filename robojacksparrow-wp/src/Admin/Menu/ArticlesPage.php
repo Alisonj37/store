@@ -6,6 +6,7 @@ namespace RoboJackSparrow\Admin\Menu;
 
 use RoboJackSparrow\Database\Repositories\ArticleRepository;
 use RoboJackSparrow\Queue\QueueManager;
+use RoboJackSparrow\Queue\Worker;
 
 class ArticlesPage
 {
@@ -14,7 +15,8 @@ class ArticlesPage
 
     public function __construct(
         private ArticleRepository $articles,
-        private ?QueueManager $queue = null
+        private ?QueueManager $queue = null,
+        private ?Worker $worker = null
     ) {
     }
 
@@ -64,7 +66,7 @@ class ArticlesPage
             $html .= '<td>' . esc_html((string) $row->status) . '</td>';
             $html .= '<td>' . esc_html((string) ($row->source_title ?? '')) . '</td>';
             $html .= '<td>' . esc_html((string) $row->created_at) . '</td>';
-            $html .= '<td>' . $this->renderRowActions((int) $row->id, (string) $row->status, $nonce) . '</td>';
+            $html .= '<td>' . $this->renderRowActions($row, $nonce) . '</td>';
             $html .= '</tr>';
         }
 
@@ -73,18 +75,26 @@ class ArticlesPage
         return $html;
     }
 
-    private function renderRowActions(int $articleId, string $status, string $nonce): string
+    private function renderRowActions(object $row, string $nonce): string
     {
-        if ($status !== 'pending') {
-            return '';
+        if ((string) $row->status === 'pending') {
+            return '<form method="post" style="display:inline">'
+                . '<input type="hidden" name="rjs_action" value="generate_now">'
+                . '<input type="hidden" name="rjs_nonce" value="' . esc_attr($nonce) . '">'
+                . '<input type="hidden" name="article_id" value="' . (int) $row->id . '">'
+                . '<button type="submit" class="button">Gerar</button>'
+                . '</form>';
         }
 
-        return '<form method="post" style="display:inline">'
-            . '<input type="hidden" name="rjs_action" value="generate_now">'
-            . '<input type="hidden" name="rjs_nonce" value="' . esc_attr($nonce) . '">'
-            . '<input type="hidden" name="article_id" value="' . $articleId . '">'
-            . '<button type="submit" class="button">Gerar</button>'
-            . '</form>';
+        if ((string) $row->status === 'published' && !empty($row->wordpress_post_id)) {
+            $editUrl = get_edit_post_link((int) $row->wordpress_post_id);
+            $viewUrl = (string) ($row->wordpress_post_url ?? '');
+
+            return '<a href="' . esc_url((string) $editUrl) . '" class="button">Editar</a> '
+                . '<a href="' . esc_url($viewUrl) . '" class="button" target="_blank" rel="noopener noreferrer">Ver</a>';
+        }
+
+        return '';
     }
 
     private function handleSubmission(): ?string
@@ -105,8 +115,54 @@ class ArticlesPage
         }
 
         $this->queue->enqueue($articleId, 'scrape');
+        $this->processSynchronously($articleId);
 
-        return '<div class="notice notice-success"><p>Artigo #' . $articleId . ' enviado para a fila de geracao.</p></div>';
+        return $this->buildResultNotice($articleId);
+    }
+
+    /**
+     * See GenerateArticlePage::processSynchronously() for why this runs
+     * inline instead of waiting for the next passive WP-Cron tick.
+     */
+    private function processSynchronously(int $articleId): void
+    {
+        if ($this->worker === null) {
+            return;
+        }
+
+        for ($i = 0; $i < 3; $i++) {
+            $this->worker->processNextBatch();
+
+            $article = $this->articles->find($articleId);
+            if ($article !== null && in_array($article->status, ['published', 'error'], true)) {
+                break;
+            }
+        }
+    }
+
+    private function buildResultNotice(int $articleId): string
+    {
+        $article = $this->articles->find($articleId);
+        if ($article === null) {
+            return '<div class="notice notice-error"><p>Artigo nao encontrado apos o processamento.</p></div>';
+        }
+
+        if ($article->status === 'published') {
+            $editUrl = get_edit_post_link((int) $article->wordpress_post_id);
+            $viewUrl = (string) ($article->wordpress_post_url ?? '');
+
+            return '<div class="notice notice-success"><p>Artigo #' . $articleId . ' gerado e publicado com sucesso.</p>'
+                . '<p><a href="' . esc_url((string) $editUrl) . '" class="button button-primary">Editar</a> '
+                . '<a href="' . esc_url($viewUrl) . '" class="button" target="_blank" rel="noopener noreferrer">Ver artigo</a></p></div>';
+        }
+
+        if ($article->status === 'error') {
+            return '<div class="notice notice-error"><p>Falha ao gerar o artigo #' . $articleId . ': '
+                . esc_html((string) ($article->error_message ?? 'erro desconhecido')) . '</p></div>';
+        }
+
+        return '<div class="notice notice-warning"><p>Artigo #' . $articleId . ' enviado para a fila (status atual: '
+            . esc_html((string) $article->status) . '). Atualize esta pagina em alguns instantes para ver o resultado.</p></div>';
     }
 
     private function currentStatusFilter(): ?string

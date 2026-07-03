@@ -23,7 +23,7 @@ class FaqExtractor
     /**
      * @return Faq[]
      */
-    public function extract(string $content, ?string $preferredProvider = null): array
+    public function extract(string $content, ?string $preferredProvider = null, ?string $modelOverride = null): array
     {
         if (trim($content) === '') {
             $this->lastTokensUsed = 0;
@@ -35,6 +35,7 @@ class FaqExtractor
 
         $response = $this->llm->route(new LLMRequest(
             prompt: $prompt,
+            model: $modelOverride,
             isJsonMode: true,
             maxTokens: 1500,
             temperature: 0.5,

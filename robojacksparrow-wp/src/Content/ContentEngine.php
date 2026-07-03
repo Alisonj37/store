@@ -45,14 +45,18 @@ class ContentEngine
      *     'assigned_llm' column, when not 'auto'). Wins over the global
      *     'rjs_preferred_llm_provider' setting; both are only a hint to the
      *     LLMRouter, which still fails over to another provider if needed.
+     * @param ?string $modelOverride Article-level model override (e.g. the
+     *     'assigned_llm_model' column). Wins over the provider's own
+     *     admin-configured default model (rjs_openai_model, etc.).
      */
-    public function generate(int $articleId, ScrapedContent $source, ResearchData $research, ?string $preferredProvider = null): GeneratedContent
+    public function generate(int $articleId, ScrapedContent $source, ResearchData $research, ?string $preferredProvider = null, ?string $modelOverride = null): GeneratedContent
     {
         $contextKey = "article_{$articleId}";
         $this->memory->clear($contextKey);
 
         $briefing = $research->toBriefing();
         $provider = $this->resolvePreferredProvider($preferredProvider);
+        $model = $modelOverride !== null && trim($modelOverride) !== '' ? $modelOverride : null;
 
         // === ETAPA 1: OUTLINE ===
         $this->logger->info('Starting outline generation', ['article_id' => $articleId]);
@@ -66,6 +70,7 @@ class ContentEngine
                 'tone'              => $this->settings->get('rjs_content_tone', 'professional'),
                 'word_count'        => $this->settings->get('rjs_target_word_count', 1500),
             ]),
+            model: $model,
             isJsonMode: true,
             maxTokens: 2048,
             temperature: 0.7,
@@ -83,7 +88,7 @@ class ContentEngine
 
         $sections = [];
         foreach ($outline->getSections() as $index => $section) {
-            $generated = $this->generateSection($contextKey, $source, $outline, $section, $index, $briefing, $provider);
+            $generated = $this->generateSection($contextKey, $source, $outline, $section, $index, $briefing, $provider, $model);
             $sections[] = $generated;
             $totalTokens += $generated['tokens'];
         }
@@ -92,7 +97,7 @@ class ContentEngine
 
         // === ETAPA 3: FAQ ===
         $this->logger->info('Starting FAQ extraction', ['article_id' => $articleId]);
-        $faqs = $this->faq->extract($fullContent, $provider);
+        $faqs = $this->faq->extract($fullContent, $provider, $model);
         $totalTokens += $this->faq->getLastTokensUsed();
 
         // === ETAPA 4: SEO ===
@@ -125,7 +130,8 @@ class ContentEngine
         array $section,
         int $index,
         string $briefing,
-        ?string $preferredProvider = null
+        ?string $preferredProvider = null,
+        ?string $modelOverride = null
     ): array {
         $memory = $this->memory->getContext($contextKey);
 
@@ -139,6 +145,7 @@ class ContentEngine
                 'source_content'    => $source->getText(),
                 'research_briefing' => $this->briefingOrFallback($briefing),
             ]),
+            model: $modelOverride,
             contextMemory: $memory,
             maxTokens: 2048,
             temperature: 0.7,

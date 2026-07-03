@@ -21,22 +21,12 @@ class SettingsPage
 
     private const CHECKBOX_OPTIONS = [
         'rjs_watermark_enabled'  => ['label' => 'Marca dagua habilitada', 'default' => '1'],
-        'rjs_autopilot_enabled'  => ['label' => 'Piloto automatico habilitado (RSS gera e publica artigos sozinho)', 'default' => '0'],
     ];
 
     /**
      * @var array<string, array{label: string, default: string, choices: array<string, string>}>
      */
     private const SELECT_OPTIONS = [
-        'rjs_autopilot_publish_status' => [
-            'label'   => 'Status de publicacao no piloto automatico',
-            'default' => 'draft',
-            'choices' => [
-                'publish' => 'Publicar imediatamente',
-                'draft'   => 'Salvar como rascunho',
-                'future'  => 'Agendar (usa o intervalo padrao)',
-            ],
-        ],
         'rjs_preferred_llm_provider' => [
             'label'   => 'Provedor de IA (texto) preferido',
             'default' => '',
@@ -64,19 +54,39 @@ class SettingsPage
     ];
 
     /**
-     * Campos de texto livre (nao um dropdown fechado): os nomes de modelo
-     * dos provedores mudam com frequencia e nem sempre e possivel confirmar
-     * o identificador exato de um modelo novo, entao o admin digita o
-     * identificador que a API do provedor espera (ex.: "gpt-4o-mini").
+     * Campo com sugestoes (via <datalist>, sem dropdown fechado): os nomes
+     * de modelo dos provedores mudam com frequencia demais para travar em
+     * uma lista fixa, entao o admin pode escolher uma sugestao conhecida OU
+     * digitar qualquer identificador que a API do provedor aceite.
      *
-     * @var array<string, array{label: string, default: string}>
+     * @var array<string, array{label: string, default: string, suggestions: string[]}>
      */
     private const MODEL_OPTIONS = [
-        'rjs_openai_model'    => ['label' => 'Modelo OpenAI', 'default' => ''],
-        'rjs_anthropic_model' => ['label' => 'Modelo Anthropic', 'default' => ''],
-        'rjs_groq_model'      => ['label' => 'Modelo Groq', 'default' => ''],
-        'rjs_gemini_model'    => ['label' => 'Modelo Gemini', 'default' => ''],
-        'rjs_deepseek_model'  => ['label' => 'Modelo DeepSeek', 'default' => ''],
+        'rjs_openai_model'    => [
+            'label'       => 'Modelo OpenAI',
+            'default'     => '',
+            'suggestions' => ['gpt-4o', 'gpt-4o-mini', 'gpt-4.1', 'gpt-4.1-mini', 'gpt-4.1-nano', 'o3-mini', 'o1'],
+        ],
+        'rjs_anthropic_model' => [
+            'label'       => 'Modelo Anthropic',
+            'default'     => '',
+            'suggestions' => ['claude-3-5-sonnet-20241022', 'claude-3-5-haiku-20241022', 'claude-3-opus-20240229', 'claude-3-haiku-20240307'],
+        ],
+        'rjs_groq_model'      => [
+            'label'       => 'Modelo Groq',
+            'default'     => '',
+            'suggestions' => ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'mixtral-8x7b-32768', 'gemma2-9b-it'],
+        ],
+        'rjs_gemini_model'    => [
+            'label'       => 'Modelo Gemini',
+            'default'     => '',
+            'suggestions' => ['gemini-1.5-pro', 'gemini-1.5-flash', 'gemini-1.5-flash-8b', 'gemini-2.0-flash'],
+        ],
+        'rjs_deepseek_model'  => [
+            'label'       => 'Modelo DeepSeek',
+            'default'     => '',
+            'suggestions' => ['deepseek-chat', 'deepseek-reasoner'],
+        ],
     ];
 
     public function __construct(private SettingRepository $settings)
@@ -96,20 +106,15 @@ class SettingsPage
             $html .= $this->renderText($key, $meta);
         }
 
-        $html .= '<h2>Piloto Automatico</h2>';
-        $html .= $this->renderCheckbox('rjs_autopilot_enabled', self::CHECKBOX_OPTIONS['rjs_autopilot_enabled']);
-        $html .= $this->renderSelect('rjs_autopilot_publish_status', self::SELECT_OPTIONS['rjs_autopilot_publish_status']);
-        $html .= '<p class="description">Quando desabilitado, novos itens de fontes RSS ficam pendentes e precisam ser gerados manualmente na pagina Artigos.</p>';
-
         $html .= '<h2>Provedores Preferidos</h2>';
         $html .= $this->renderSelect('rjs_preferred_llm_provider', self::SELECT_OPTIONS['rjs_preferred_llm_provider']);
         $html .= $this->renderSelect('rjs_preferred_image_provider', self::SELECT_OPTIONS['rjs_preferred_image_provider']);
         $html .= $this->renderCheckbox('rjs_watermark_enabled', self::CHECKBOX_OPTIONS['rjs_watermark_enabled']);
 
         $html .= '<h2>Modelos por Provedor</h2>';
-        $html .= '<p class="description">Deixe em branco para usar o modelo padrao de cada provedor.</p>';
+        $html .= '<p class="description">Escolha uma sugestao ou digite o identificador do modelo. Deixe em branco para usar o padrao de cada provedor.</p>';
         foreach (self::MODEL_OPTIONS as $key => $meta) {
-            $html .= $this->renderText($key, $meta);
+            $html .= $this->renderModelField($key, $meta);
         }
 
         $html .= '<p><button type="submit" class="button button-primary">Salvar</button></p></form></div>';
@@ -129,6 +134,31 @@ class SettingsPage
             esc_html($meta['label']),
             esc_attr($key),
             esc_attr((string) $value)
+        );
+    }
+
+    /**
+     * @param array{label: string, default: string, suggestions: string[]} $meta
+     */
+    private function renderModelField(string $key, array $meta): string
+    {
+        $value = $this->settings->get($key, $meta['default']);
+        $listId = $key . '_suggestions';
+
+        $options = '';
+        foreach ($meta['suggestions'] as $suggestion) {
+            $options .= sprintf('<option value="%s">', esc_attr($suggestion));
+        }
+
+        return sprintf(
+            '<p><label>%s<br><input type="text" name="%s" value="%s" list="%s" placeholder="ex: %s"><datalist id="%s">%s</datalist></label></p>',
+            esc_html($meta['label']),
+            esc_attr($key),
+            esc_attr((string) $value),
+            esc_attr($listId),
+            esc_attr($meta['suggestions'][0] ?? ''),
+            esc_attr($listId),
+            $options
         );
     }
 

@@ -209,6 +209,15 @@ class wpdb
         if (str_contains($query, 'rjs_queue')) {
             return $this->selectRows($this->queueRows, $query, 'status');
         }
+        if (str_contains($query, 'DISTINCT source') && str_contains($query, 'rjs_logs')) {
+            $sources = array_unique(array_map(static fn (array $r) => (string) $r['source'], $this->logs));
+            sort($sources);
+
+            return array_map(static fn (string $s) => (object) ['source' => $s], $sources);
+        }
+        if (str_contains($query, 'rjs_logs') && str_contains($query, 'WHERE')) {
+            return $this->selectLogsFiltered($query, $this->lastPrepareArgs);
+        }
         if (str_contains($query, 'rjs_logs')) {
             return $this->selectRows($this->logs, $query, 'level');
         }
@@ -457,6 +466,59 @@ class wpdb
         $filtered = array_values($filtered);
         usort($filtered, static fn (array $a, array $b) => strcmp((string) $b['created_at'], (string) $a['created_at']));
         $filtered = array_slice($filtered, 0, (int) $limit);
+
+        return array_map(static fn (array $r) => (object) $r, $filtered);
+    }
+
+    /**
+     * Backs LogRepository::findFiltered(): an arbitrary AND-combination of
+     * optional conditions (level/source/article_id/since) rather than the
+     * single filterField+limit pattern selectRows() assumes. Detects which
+     * conditions are present from the (unsubstituted) query text and
+     * consumes prepared args in the same fixed order the repository builds
+     * them in.
+     */
+    private function selectLogsFiltered(string $query, array $args): array
+    {
+        $argIndex = 0;
+        $level = null;
+        $source = null;
+        $articleId = null;
+        $since = null;
+
+        if (str_contains($query, 'level = %s')) {
+            $level = $args[$argIndex++];
+        }
+        if (str_contains($query, 'source = %s')) {
+            $source = $args[$argIndex++];
+        }
+        if (str_contains($query, 'article_id = %d')) {
+            $articleId = (int) $args[$argIndex++];
+        }
+        if (str_contains($query, 'created_at >= %s')) {
+            $since = $args[$argIndex++];
+        }
+        $limit = (int) ($args[$argIndex] ?? PHP_INT_MAX);
+
+        $filtered = array_values(array_filter($this->logs, static function (array $row) use ($level, $source, $articleId, $since): bool {
+            if ($level !== null && ($row['level'] ?? null) !== $level) {
+                return false;
+            }
+            if ($source !== null && ($row['source'] ?? null) !== $source) {
+                return false;
+            }
+            if ($articleId !== null && (int) ($row['article_id'] ?? 0) !== $articleId) {
+                return false;
+            }
+            if ($since !== null && (string) ($row['created_at'] ?? '') < $since) {
+                return false;
+            }
+
+            return true;
+        }));
+
+        usort($filtered, static fn (array $a, array $b) => strcmp((string) $b['created_at'], (string) $a['created_at']));
+        $filtered = array_slice($filtered, 0, $limit);
 
         return array_map(static fn (array $r) => (object) $r, $filtered);
     }

@@ -41,6 +41,64 @@ class LogRepository
     }
 
     /**
+     * @param array{level?: ?string, source?: ?string, article_id?: ?int, since?: ?string} $filters
+     * @return object[]
+     */
+    public function findFiltered(array $filters, int $limit = 50): array
+    {
+        $conditions = [];
+        $args = [];
+
+        $level = $filters['level'] ?? null;
+        if ($level !== null && $level !== '') {
+            $conditions[] = 'level = %s';
+            $args[] = $level;
+        }
+
+        $source = $filters['source'] ?? null;
+        if ($source !== null && $source !== '') {
+            $conditions[] = 'source = %s';
+            $args[] = $source;
+        }
+
+        $articleId = $filters['article_id'] ?? null;
+        if ($articleId !== null && $articleId > 0) {
+            $conditions[] = 'article_id = %d';
+            $args[] = $articleId;
+        }
+
+        $since = $filters['since'] ?? null;
+        if ($since !== null && $since !== '') {
+            $conditions[] = 'created_at >= %s';
+            $args[] = $since;
+        }
+
+        $where = $conditions !== [] ? 'WHERE ' . implode(' AND ', $conditions) : '';
+        $args[] = $limit;
+
+        $rows = $this->db->get_results($this->db->prepare(
+            "SELECT * FROM {$this->table} {$where} ORDER BY created_at DESC LIMIT %d",
+            ...$args
+        ));
+
+        return is_array($rows) ? $rows : [];
+    }
+
+    /**
+     * Distinct 'source' values seen so far (e.g. "ContentEngine::generate"),
+     * used to populate the "Modulo" filter dropdown without hardcoding a
+     * list that would drift from the actual logged callers.
+     *
+     * @return string[]
+     */
+    public function distinctSources(): array
+    {
+        $rows = $this->db->get_results("SELECT DISTINCT source FROM {$this->table} ORDER BY source ASC");
+
+        return array_map(static fn ($row) => (string) $row->source, is_array($rows) ? $rows : []);
+    }
+
+    /**
      * @return array<string, int>
      */
     public function countByLevel(): array

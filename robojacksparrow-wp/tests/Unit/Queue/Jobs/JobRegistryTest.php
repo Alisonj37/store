@@ -125,6 +125,7 @@ final class JobRegistryTest extends TestCase
             'status'                => 'pending',
             'priority'              => 5,
             'assigned_llm'          => 'preferred-llm',
+            'assigned_llm_model'    => 'gpt-4o-mini',
             'assigned_image_source' => 'preferred-image',
             'created_at'            => '2026-01-01 00:00:00',
         ];
@@ -173,6 +174,11 @@ final class JobRegistryTest extends TestCase
         $this->assertSame('published', $article->status);
         $this->assertSame(0, $decoyLlm->calls, 'decoy LLM must never be invoked when assigned_llm overrides routing');
         $this->assertSame(0, $decoyImage->calls, 'decoy image provider must never be invoked when assigned_image_source overrides ordering');
+
+        $this->assertNotEmpty($preferredLlm->requestedModels);
+        foreach ($preferredLlm->requestedModels as $model) {
+            $this->assertSame('gpt-4o-mini', $model, 'assigned_llm_model must reach every LLM request, not just routing');
+        }
     }
 
     public function testHandleGenerateContentInjectsInternalLinksToOtherPublishedArticles(): void
@@ -336,6 +342,9 @@ final class FakeScraper implements ScraperDriverInterface
 
 final class FakeLlmProvider implements LLMProviderInterface
 {
+    /** @var array<int, ?string> */
+    public array $requestedModels = [];
+
     public function __construct(private string $name = 'test')
     {
     }
@@ -347,6 +356,7 @@ final class FakeLlmProvider implements LLMProviderInterface
 
     public function send(LLMRequest $request): LLMResponse
     {
+        $this->requestedModels[] = $request->getModel();
         $prompt = $request->getPrompt();
 
         if (str_contains($prompt, 'Crie a estrutura de um artigo original')) {

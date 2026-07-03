@@ -96,6 +96,7 @@ class Schema
             tags                   JSON NULL,
             assigned_scraper       VARCHAR(20) NOT NULL DEFAULT 'auto',
             assigned_llm           VARCHAR(20) NOT NULL DEFAULT 'auto',
+            assigned_llm_model     VARCHAR(100) NULL,
             assigned_image_source  VARCHAR(20) NOT NULL DEFAULT 'auto',
             image_prompt           LONGTEXT NULL,
             featured_image_id      BIGINT UNSIGNED NULL,

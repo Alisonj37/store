@@ -11,26 +11,106 @@ class LogsPage
 {
     private const PER_PAGE = 50;
 
+    private const LEVELS = ['debug', 'info', 'warning', 'error', 'critical'];
+
+    private const PERIODS = [
+        ''      => 'Todos',
+        'today' => 'Hoje',
+        '7d'    => 'Ultimos 7 dias',
+        '30d'   => 'Ultimos 30 dias',
+    ];
+
     public function __construct(private LogRepository $logs)
     {
     }
 
     public function render(): string
     {
-        $level = isset($_GET['level']) ? sanitize_text_field((string) $_GET['level']) : '';
-        $level = $level !== '' ? $level : null;
+        $level = $this->stringParam('level');
+        $source = $this->stringParam('module');
+        $period = $this->stringParam('period');
+        $articleId = (int) ($_GET['post_id'] ?? 0);
 
-        $rows = $this->logs->findRecent(self::PER_PAGE, $level);
+        $rows = $this->logs->findFiltered([
+            'level'      => $level,
+            'source'     => $source,
+            'article_id' => $articleId > 0 ? $articleId : null,
+            'since'      => $this->periodToSince($period),
+        ], self::PER_PAGE);
 
         $html = '<div class="wrap"><h1>Logs</h1>';
+        $html .= $this->renderFilterForm($level, $source, $period, $articleId);
         $html .= View::table($rows, [
             'created_at' => 'Data',
             'level'      => 'Nivel',
             'source'     => 'Origem',
+            'article_id' => 'Post ID',
             'message'    => 'Mensagem',
         ]);
         $html .= '</div>';
 
         return $html;
+    }
+
+    private function renderFilterForm(?string $level, ?string $source, ?string $period, int $articleId): string
+    {
+        $html = '<form method="get" style="margin:1em 0;display:flex;gap:1em;align-items:flex-end;flex-wrap:wrap">';
+        $html .= '<input type="hidden" name="page" value="' . esc_attr((string) ($_GET['page'] ?? '')) . '">';
+
+        $html .= '<p style="margin:0"><label>Tipo<br>' . $this->select('level', ['' => 'Todos'] + array_combine(self::LEVELS, self::LEVELS), $level ?? '') . '</label></p>';
+        $html .= '<p style="margin:0"><label>Modulo<br>' . $this->select('module', $this->moduleChoices(), $source ?? '') . '</label></p>';
+        $html .= '<p style="margin:0"><label>Periodo<br>' . $this->select('period', self::PERIODS, $period ?? '') . '</label></p>';
+        $html .= '<p style="margin:0"><label>Post ID<br><input type="number" name="post_id" min="0" value="' . ($articleId > 0 ? $articleId : '0') . '" style="width:6em"></label></p>';
+
+        $html .= '<p style="margin:0"><button type="submit" class="button button-primary">Filtrar</button>'
+            . ' <a href="?page=' . esc_attr((string) ($_GET['page'] ?? '')) . '" class="button">Limpar filtros</a></p>';
+
+        $html .= '</form>';
+
+        return $html;
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    private function moduleChoices(): array
+    {
+        $choices = ['' => 'Todos os modulos'];
+        foreach ($this->logs->distinctSources() as $source) {
+            $choices[$source] = $source;
+        }
+
+        return $choices;
+    }
+
+    /**
+     * @param array<string, string> $choices
+     */
+    private function select(string $name, array $choices, string $selected): string
+    {
+        $options = '';
+        foreach ($choices as $value => $label) {
+            $isSelected = $value === $selected ? ' selected' : '';
+            $options .= sprintf('<option value="%s"%s>%s</option>', esc_attr($value), $isSelected, esc_html($label));
+        }
+
+        return sprintf('<select name="%s">%s</select>', esc_attr($name), $options);
+    }
+
+    private function periodToSince(?string $period): ?string
+    {
+        return match ($period) {
+            'today' => gmdate('Y-m-d 00:00:00'),
+            '7d'    => gmdate('Y-m-d H:i:s', time() - 7 * DAY_IN_SECONDS),
+            '30d'   => gmdate('Y-m-d H:i:s', time() - 30 * DAY_IN_SECONDS),
+            default => null,
+        };
+    }
+
+    private function stringParam(string $key): ?string
+    {
+        $value = isset($_GET[$key]) ? sanitize_text_field((string) $_GET[$key]) : '';
+
+        return $value !== '' ? $value : null;
     }
 }

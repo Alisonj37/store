@@ -6,8 +6,10 @@ namespace RoboJackSparrow\Tests\Unit\Admin;
 
 use RoboJackSparrow\Admin\Menu\ApiKeysPage;
 use RoboJackSparrow\Admin\Menu\ArticlesPage;
+use RoboJackSparrow\Admin\Menu\AutopilotPage;
 use RoboJackSparrow\Admin\Menu\DashboardPage;
 use RoboJackSparrow\Admin\Menu\GenerateArticlePage;
+use RoboJackSparrow\Admin\Menu\LogsPage;
 use RoboJackSparrow\Admin\Menu\SettingsPage;
 use RoboJackSparrow\Admin\Menu\SourcesPage;
 use RoboJackSparrow\Ai\HealthMonitor;
@@ -133,6 +135,37 @@ final class AdminPagesTest extends TestCase
         $this->assertSame([], $this->wpdb->sources);
     }
 
+    public function testSourcesPageCanAddASiteUrlSourceInsteadOfRss(): void
+    {
+        $sources = new SourceRepository();
+        $page = new SourcesPage($sources);
+
+        $_POST = [
+            'rjs_action' => 'add_source', 'rjs_nonce' => 'nonce-rjs_sources',
+            'source_name' => 'Meu Blog', 'source_url' => 'https://example.com/blog', 'source_type' => 'scraper',
+        ];
+        $html = $page->render();
+
+        $id = array_key_first($this->wpdb->sources);
+        $this->assertSame('scraper', $this->wpdb->sources[$id]['source_type']);
+        $this->assertStringContainsString('URL de site', $html);
+    }
+
+    public function testSourcesPageRejectsUnknownSourceTypeAndFallsBackToRss(): void
+    {
+        $sources = new SourceRepository();
+        $page = new SourcesPage($sources);
+
+        $_POST = [
+            'rjs_action' => 'add_source', 'rjs_nonce' => 'nonce-rjs_sources',
+            'source_name' => 'X', 'source_url' => 'https://example.com/feed', 'source_type' => 'not-a-real-type',
+        ];
+        $page->render();
+
+        $id = array_key_first($this->wpdb->sources);
+        $this->assertSame('rss', $this->wpdb->sources[$id]['source_type']);
+    }
+
     public function testSettingsPageSavesViaSettingRepository(): void
     {
         $settings = new SettingRepository(new Encryption(), new Logger());
@@ -152,14 +185,23 @@ final class AdminPagesTest extends TestCase
         $this->assertStringContainsString('value="en_US"', $html);
     }
 
-    public function testSettingsPageSavesAutopilotAndProviderPreferences(): void
+    public function testSettingsPageModelFieldsOfferDatalistSuggestions(): void
+    {
+        $settings = new SettingRepository(new Encryption(), new Logger());
+        $html = (new SettingsPage($settings))->render();
+
+        $this->assertStringContainsString('list="rjs_openai_model_suggestions"', $html);
+        $this->assertStringContainsString('<datalist id="rjs_openai_model_suggestions">', $html);
+        $this->assertStringContainsString('value="gpt-4o-mini"', $html);
+        $this->assertStringContainsString('value="claude-3-5-sonnet-20241022"', $html);
+    }
+
+    public function testSettingsPageSavesProviderPreferencesAndModel(): void
     {
         $settings = new SettingRepository(new Encryption(), new Logger());
         $_POST = [
             'rjs_action' => 'save_settings',
             'rjs_nonce'  => 'nonce-rjs_settings',
-            'rjs_autopilot_enabled' => '1',
-            'rjs_autopilot_publish_status' => 'publish',
             'rjs_preferred_llm_provider' => 'anthropic',
             'rjs_preferred_image_provider' => 'pexels',
             'rjs_openai_model' => 'gpt-4o-mini',
@@ -167,8 +209,6 @@ final class AdminPagesTest extends TestCase
 
         $html = (new SettingsPage($settings))->render();
 
-        $this->assertSame('1', $settings->get('rjs_autopilot_enabled'));
-        $this->assertSame('publish', $settings->get('rjs_autopilot_publish_status'));
         $this->assertSame('anthropic', $settings->get('rjs_preferred_llm_provider'));
         $this->assertSame('pexels', $settings->get('rjs_preferred_image_provider'));
         $this->assertSame('gpt-4o-mini', $settings->get('rjs_openai_model'));
@@ -178,7 +218,7 @@ final class AdminPagesTest extends TestCase
     public function testSettingsPageUncheckedCheckboxIsSavedAsDisabled(): void
     {
         $settings = new SettingRepository(new Encryption(), new Logger());
-        $settings->set('rjs_autopilot_enabled', '1');
+        $settings->set('rjs_watermark_enabled', '1');
 
         // Submitting the form with the checkbox omitted (as browsers do for
         // unchecked checkboxes) must persist it as disabled, not leave the
@@ -190,7 +230,7 @@ final class AdminPagesTest extends TestCase
 
         (new SettingsPage($settings))->render();
 
-        $this->assertSame('0', $settings->get('rjs_autopilot_enabled'));
+        $this->assertSame('0', $settings->get('rjs_watermark_enabled'));
     }
 
     public function testSettingsPageRejectsUnknownSelectValue(): void
@@ -242,6 +282,86 @@ final class AdminPagesTest extends TestCase
         $this->assertStringNotContainsString('<a href', $keiSection);
     }
 
+    public function testAutopilotPageShowsDisabledBannerAndSourcesSummaryByDefault(): void
+    {
+        $this->wpdb->sources[1] = [
+            'id' => 1, 'source_name' => 'Meu Blog', 'source_url' => 'https://example.com/blog',
+            'source_type' => 'scraper', 'is_active' => 1, 'last_scraped_at' => '2026-01-01 10:00:00',
+            'created_at' => '2026-01-01 00:00:00',
+        ];
+
+        $settings = new SettingRepository(new Encryption(), new Logger());
+        $page = new AutopilotPage($settings, new SourceRepository());
+
+        $html = $page->render();
+
+        $this->assertStringContainsString('desligado', $html);
+        $this->assertStringContainsString('Meu Blog', $html);
+        $this->assertStringContainsString('URL de site', $html);
+    }
+
+    public function testAutopilotPageSavesEnabledStateAndPublishStatus(): void
+    {
+        $settings = new SettingRepository(new Encryption(), new Logger());
+        $page = new AutopilotPage($settings, new SourceRepository());
+
+        $_POST = [
+            'rjs_action' => 'save_autopilot',
+            'rjs_nonce'  => 'nonce-rjs_autopilot',
+            'rjs_autopilot_enabled' => '1',
+            'rjs_autopilot_publish_status' => 'publish',
+        ];
+
+        $html = $page->render();
+
+        $this->assertSame('1', $settings->get('rjs_autopilot_enabled'));
+        $this->assertSame('publish', $settings->get('rjs_autopilot_publish_status'));
+        $this->assertStringContainsString('ligado', $html);
+    }
+
+    public function testAutopilotPageUncheckedCheckboxDisablesIt(): void
+    {
+        $settings = new SettingRepository(new Encryption(), new Logger());
+        $settings->set('rjs_autopilot_enabled', '1');
+        $page = new AutopilotPage($settings, new SourceRepository());
+
+        $_POST = ['rjs_action' => 'save_autopilot', 'rjs_nonce' => 'nonce-rjs_autopilot'];
+        $page->render();
+
+        $this->assertSame('0', $settings->get('rjs_autopilot_enabled'));
+    }
+
+    public function testLogsPageRendersFilterFormWithModuleChoicesAndAppliesFilters(): void
+    {
+        $this->wpdb->logs = [
+            1 => ['id' => 1, 'article_id' => 5, 'level' => 'info', 'source' => 'ScraperEngine::scrape', 'message' => 'Scraped ok', 'created_at' => '2026-01-01 00:00:00'],
+            2 => ['id' => 2, 'article_id' => 6, 'level' => 'error', 'source' => 'ContentEngine::generate', 'message' => 'Falhou', 'created_at' => '2026-01-02 00:00:00'],
+        ];
+
+        $page = new LogsPage(new LogRepository());
+        $htmlUnfiltered = $page->render();
+
+        $this->assertStringContainsString('<select name="level">', $htmlUnfiltered);
+        $this->assertStringContainsString('<select name="module">', $htmlUnfiltered);
+        $this->assertStringContainsString('<select name="period">', $htmlUnfiltered);
+        $this->assertStringContainsString('name="post_id"', $htmlUnfiltered);
+        $this->assertStringContainsString('ContentEngine::generate', $htmlUnfiltered, 'module dropdown must list distinct real sources');
+        $this->assertStringContainsString('Filtrar', $htmlUnfiltered);
+        $this->assertStringContainsString('Limpar filtros', $htmlUnfiltered);
+        $this->assertStringContainsString('Scraped ok', $htmlUnfiltered);
+        $this->assertStringContainsString('Falhou', $htmlUnfiltered);
+
+        $_GET = ['level' => 'error'];
+        $htmlFiltered = $page->render();
+        $this->assertStringNotContainsString('Scraped ok', $htmlFiltered);
+        $this->assertStringContainsString('Falhou', $htmlFiltered);
+
+        $_GET = ['post_id' => '5'];
+        $htmlByPost = $page->render();
+        $this->assertStringContainsString('Scraped ok', $htmlByPost);
+        $this->assertStringNotContainsString('Falhou', $htmlByPost);
+    }
+
     public function testGenerateArticlePageCreatesArticleAndEnqueuesScrapeJob(): void
     {
         $this->wpdb->categories['Tecnologia'] = 42;
@@ -271,10 +391,35 @@ final class AdminPagesTest extends TestCase
         $this->assertSame('anthropic', $article['assigned_llm']);
         $this->assertSame('pexels', $article['assigned_image_source']);
         $this->assertSame('draft', $article['target_post_status']);
+        $this->assertArrayHasKey('assigned_llm_model', $article);
+        $this->assertNull($article['assigned_llm_model'], 'left blank in this test, must not silently coerce to an empty string');
 
         $this->assertCount(1, $this->wpdb->queueRows);
         $this->assertSame('scrape', reset($this->wpdb->queueRows)['job_type']);
         $this->assertStringContainsString('criado e enviado', $html);
+    }
+
+    public function testGenerateArticlePageSavesModelOverrideWhenProvided(): void
+    {
+        $articles = new ArticleRepository();
+        $queue = new QueueManager(new Logger());
+        $page = new GenerateArticlePage($articles, $queue);
+
+        $before = $page->render();
+        $this->assertStringContainsString('name="assigned_llm_model"', $before);
+        $this->assertStringContainsString('gpt-4o-mini', $before, 'model suggestions datalist must offer known identifiers');
+
+        $_POST = [
+            'rjs_action' => 'generate_article',
+            'rjs_nonce'  => 'nonce-rjs_generate_article',
+            'source_url' => 'https://example.com/x',
+            'assigned_llm' => 'openai',
+            'assigned_llm_model' => 'gpt-4o-mini',
+        ];
+        $page->render();
+
+        $article = reset($this->wpdb->articles);
+        $this->assertSame('gpt-4o-mini', $article['assigned_llm_model']);
     }
 
     public function testGenerateArticlePageRejectsEmptyUrl(): void

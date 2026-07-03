@@ -25,6 +25,15 @@ if (!defined('SECURE_AUTH_KEY')) {
 if (!defined('ARRAY_A')) {
     define('ARRAY_A', 'ARRAY_A');
 }
+if (!defined('MINUTE_IN_SECONDS')) {
+    define('MINUTE_IN_SECONDS', 60);
+}
+if (!defined('HOUR_IN_SECONDS')) {
+    define('HOUR_IN_SECONDS', 3600);
+}
+if (!defined('DAY_IN_SECONDS')) {
+    define('DAY_IN_SECONDS', 86400);
+}
 
 @mkdir(ABSPATH . 'wp-admin/includes', 0777, true);
 foreach (['image.php', 'file.php', 'media.php'] as $file) {
@@ -241,6 +250,8 @@ function wp_insert_post($data, $wpError = false)
 }
 
 function get_permalink($postId) { return "https://example.test/?p={$postId}"; }
+function admin_url($path = '') { return 'https://example.test/wp-admin/' . ltrim((string) $path, '/'); }
+function get_edit_post_link($postId) { return admin_url('post.php?post=' . (int) $postId . '&action=edit'); }
 
 function get_term_by($field, $value, $taxonomy)
 {

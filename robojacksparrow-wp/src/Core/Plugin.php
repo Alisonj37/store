@@ -7,6 +7,7 @@ namespace RoboJackSparrow\Core;
 use RoboJackSparrow\Admin\Admin;
 use RoboJackSparrow\Admin\Menu\ApiKeysPage;
 use RoboJackSparrow\Admin\Menu\ArticlesPage;
+use RoboJackSparrow\Admin\Menu\AutopilotPage;
 use RoboJackSparrow\Admin\Menu\DashboardPage;
 use RoboJackSparrow\Admin\Menu\GenerateArticlePage;
 use RoboJackSparrow\Admin\Menu\LogsPage;
@@ -35,6 +36,7 @@ use RoboJackSparrow\Content\Prompts\PromptLibrary;
 use RoboJackSparrow\Content\Seo\SeoGenerator;
 use RoboJackSparrow\Cron\CronManager;
 use RoboJackSparrow\Cron\Handlers\RssCron;
+use RoboJackSparrow\Cron\Handlers\ScraperCron;
 use RoboJackSparrow\Database\Repositories\ArticleRepository;
 use RoboJackSparrow\Database\Repositories\LogRepository;
 use RoboJackSparrow\Database\Repositories\QueueRepository as QueueRepositoryModel;
@@ -60,6 +62,7 @@ use RoboJackSparrow\Scraper\Drivers\FirecrawlDriver;
 use RoboJackSparrow\Scraper\Drivers\JinaAiDriver;
 use RoboJackSparrow\Scraper\Rss\RssParser;
 use RoboJackSparrow\Scraper\ScraperEngine;
+use RoboJackSparrow\Scraper\SiteLinkDiscovery;
 
 final class Plugin
 {
@@ -72,6 +75,7 @@ final class Plugin
     private RestApi $restApi;
     private JobRegistry $jobRegistry;
     private RssCron $rssCron;
+    private ScraperCron $scraperCron;
     private ?Admin $admin = null;
 
     public static function instance(): self
@@ -97,6 +101,14 @@ final class Plugin
         $this->rssCron = new RssCron(
             new SourceRepository(),
             new RssParser(),
+            new ArticleRepository(),
+            $this->queueManager,
+            $settings,
+            $this->logger
+        );
+        $this->scraperCron = new ScraperCron(
+            new SourceRepository(),
+            new SiteLinkDiscovery(new RssParser(), $this->logger),
             new ArticleRepository(),
             $this->queueManager,
             $settings,
@@ -136,8 +148,9 @@ final class Plugin
 
         return new Admin(
             new DashboardPage($articles, $queue, $logs, $health),
-            new ArticlesPage($articles, $this->queueManager),
-            new GenerateArticlePage($articles, $this->queueManager),
+            new ArticlesPage($articles, $this->queueManager, $this->worker),
+            new GenerateArticlePage($articles, $this->queueManager, $this->worker),
+            new AutopilotPage($settings, $sources),
             new QueuePage($queue),
             new SourcesPage($sources),
             new LogsPage($logs),
@@ -238,6 +251,7 @@ final class Plugin
         $this->restApi->register();
         $this->jobRegistry->register();
         $this->rssCron->register();
+        $this->scraperCron->register();
 
         add_action('rjs_worker_process', [$this->worker, 'processNextBatch']);
         add_action('init', [$this, 'loadTextdomain']);

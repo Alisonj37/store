@@ -86,6 +86,38 @@ final class ContentEngineTest extends TestCase
         $this->assertStringContainsString('<a href="https://example.com/fonte" target="_blank" rel="noopener noreferrer">Fonte Exemplo Verificada</a>', $result->getHtmlContent());
     }
 
+    public function testModelOverrideReachesEveryLlmRequestInThePipeline(): void
+    {
+        $provider = new ScriptedProvider();
+        $engine = $this->makeEngine($provider);
+
+        $source = new ScrapedContent(url: 'x', title: 'X', text: 'Algum texto fonte.', html: null);
+        $research = new ResearchData(facts: [], sources: [], answer: null, entities: [], fromFallback: true);
+
+        $engine->generate(1, $source, $research, null, 'gpt-4o-mini');
+
+        // Outline, both sections, and the FAQ call must all carry the override.
+        $this->assertNotEmpty($provider->requestedModels);
+        foreach ($provider->requestedModels as $model) {
+            $this->assertSame('gpt-4o-mini', $model);
+        }
+    }
+
+    public function testBlankModelOverrideLeavesModelResolutionToTheProvider(): void
+    {
+        $provider = new ScriptedProvider();
+        $engine = $this->makeEngine($provider);
+
+        $source = new ScrapedContent(url: 'x', title: 'X', text: 'Algum texto fonte.', html: null);
+        $research = new ResearchData(facts: [], sources: [], answer: null, entities: [], fromFallback: true);
+
+        $engine->generate(1, $source, $research, null, '   ');
+
+        foreach ($provider->requestedModels as $model) {
+            $this->assertNull($model, 'a blank override must not be forwarded as a literal model string');
+        }
+    }
+
     public function testNoSourcesBlockIsAddedWhenResearchHasNoSources(): void
     {
         $provider = new ScriptedProvider();
@@ -137,6 +169,9 @@ final class ScriptedProvider implements LLMProviderInterface
     /** @var string[] */
     public array $prompts = [];
 
+    /** @var array<int, ?string> */
+    public array $requestedModels = [];
+
     public function getName(): string
     {
         return 'test';
@@ -146,6 +181,7 @@ final class ScriptedProvider implements LLMProviderInterface
     {
         $prompt = $request->getPrompt();
         $this->prompts[] = $prompt;
+        $this->requestedModels[] = $request->getModel();
 
         if (str_contains($prompt, 'Crie a estrutura de um artigo original')) {
             return new LLMResponse(
