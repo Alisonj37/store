@@ -1,0 +1,94 @@
+<?php
+
+declare(strict_types=1);
+
+namespace RoboJackSparrow\Database\Repositories;
+
+use wpdb;
+
+class QueueRepository
+{
+    private wpdb $db;
+    private string $table;
+
+    public function __construct()
+    {
+        global $wpdb;
+
+        $this->db = $wpdb;
+        $this->table = $wpdb->prefix . 'rjs_queue';
+    }
+
+    /**
+     * @return object[]
+     */
+    public function findRecent(int $limit = 20, int $offset = 0, ?string $status = null): array
+    {
+        if ($status !== null) {
+            $rows = $this->db->get_results($this->db->prepare(
+                "SELECT * FROM {$this->table} WHERE status = %s ORDER BY created_at DESC LIMIT %d OFFSET %d",
+                $status,
+                $limit,
+                $offset
+            ));
+        } else {
+            $rows = $this->db->get_results($this->db->prepare(
+                "SELECT * FROM {$this->table} ORDER BY created_at DESC LIMIT %d OFFSET %d",
+                $limit,
+                $offset
+            ));
+        }
+
+        return is_array($rows) ? $rows : [];
+    }
+
+    public function find(int $id): ?object
+    {
+        $row = $this->db->get_row(
+            $this->db->prepare("SELECT * FROM {$this->table} WHERE id = %d", $id)
+        );
+
+        return $row instanceof \stdClass ? $row : null;
+    }
+
+    public function count(?string $status = null): int
+    {
+        if ($status !== null) {
+            return (int) $this->db->get_var(
+                $this->db->prepare("SELECT COUNT(*) FROM {$this->table} WHERE status = %s", $status)
+            );
+        }
+
+        return (int) $this->db->get_var("SELECT COUNT(*) FROM {$this->table}");
+    }
+
+    /**
+     * Deletes finished jobs (completed or failed) so the queue table
+     * doesn't grow unbounded - pending/processing jobs are left untouched.
+     *
+     * @return int Number of rows deleted.
+     */
+    public function deleteCompletedAndFailed(): int
+    {
+        $result = $this->db->query(
+            $this->db->prepare("DELETE FROM {$this->table} WHERE status IN (%s, %s)", 'completed', 'failed')
+        );
+
+        return is_int($result) ? $result : 0;
+    }
+
+    /**
+     * @return array<string, int>
+     */
+    public function countByStatus(): array
+    {
+        $rows = $this->db->get_results("SELECT status, COUNT(*) as total FROM {$this->table} GROUP BY status");
+
+        $counts = [];
+        foreach ((is_array($rows) ? $rows : []) as $row) {
+            $counts[(string) $row->status] = (int) $row->total;
+        }
+
+        return $counts;
+    }
+}
