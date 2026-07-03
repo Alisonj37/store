@@ -9,6 +9,7 @@ use RoboJackSparrow\Cron\ScrapeFrequency;
 use RoboJackSparrow\Database\Repositories\ArticleRepository;
 use RoboJackSparrow\Database\Repositories\SettingRepository;
 use RoboJackSparrow\Database\Repositories\SourceRepository;
+use RoboJackSparrow\Publisher\WordPress\CategoryNameResolver;
 use RoboJackSparrow\Queue\QueueManager;
 use RoboJackSparrow\Scraper\SiteLinkDiscovery;
 use Throwable;
@@ -86,6 +87,7 @@ class ScraperCron
                 'source_url'         => $link,
                 'status'             => 'pending',
                 'category_id'        => $source->category_id,
+                'category_name'      => CategoryNameResolver::nameFor($source->category_id ?? null),
                 'priority'           => 5,
                 'target_post_status' => $autopilotEnabled ? $autopilotPublishStatus : 'draft',
             ]);

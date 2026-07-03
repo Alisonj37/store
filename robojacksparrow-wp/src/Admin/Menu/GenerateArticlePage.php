@@ -6,6 +6,7 @@ namespace RoboJackSparrow\Admin\Menu;
 
 use RoboJackSparrow\Content\Tone\TonePresets;
 use RoboJackSparrow\Database\Repositories\ArticleRepository;
+use RoboJackSparrow\Publisher\WordPress\CategoryNameResolver;
 use RoboJackSparrow\Queue\QueueManager;
 use RoboJackSparrow\Queue\Worker;
 
@@ -174,9 +175,7 @@ class GenerateArticlePage
         }
 
         $categoryId = (int) ($_POST['category_id'] ?? 0);
-        $categoryName = $categoryId > 0 && function_exists('get_term')
-            ? $this->categoryName($categoryId)
-            : null;
+        $categoryName = CategoryNameResolver::nameFor($categoryId > 0 ? $categoryId : null);
 
         $assignedLlm = $this->pickChoice((string) ($_POST['assigned_llm'] ?? ''), self::LLM_PROVIDERS);
         $assignedLlmModel = trim(sanitize_text_field((string) ($_POST['assigned_llm_model'] ?? '')));
@@ -273,12 +272,6 @@ class GenerateArticlePage
         return array_key_exists($value, $choices) ? $value : $default;
     }
 
-    private function categoryName(int $categoryId): ?string
-    {
-        $term = get_term($categoryId, 'category');
-
-        return ($term !== null && !is_wp_error($term)) ? (string) $term->name : null;
-    }
 
     private function parseScheduledAt(string $value): ?string
     {

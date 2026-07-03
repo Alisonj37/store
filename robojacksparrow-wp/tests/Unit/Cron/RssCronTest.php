@@ -45,6 +45,7 @@ final class RssCronTest extends TestCase
 
     public function testCollectCreatesArticlesAndEnqueuesScrapeJobsForNewItemsOnlyWhenAutopilotEnabled(): void
     {
+        $this->wpdb->categories['Tecnologia'] = 7;
         $this->wpdb->sources[1] = [
             'id' => 1, 'source_name' => 'Tech Blog', 'source_url' => 'https://example.com/feed',
             'source_type' => 'rss', 'is_active' => 1, 'category_id' => 7,
@@ -71,6 +72,7 @@ final class RssCronTest extends TestCase
         $this->assertSame('Item Two', $newArticle['source_title']);
         $this->assertSame('rss', $newArticle['source_type']);
         $this->assertSame(7, $newArticle['category_id']);
+        $this->assertSame('Tecnologia', $newArticle['category_name'], 'the category name must be resolved so handlePublish() actually applies it, not just the id');
         $this->assertSame('publish', $newArticle['target_post_status']);
 
         $this->assertCount(1, $this->wpdb->queueRows, 'exactly one scrape job for the one new item');

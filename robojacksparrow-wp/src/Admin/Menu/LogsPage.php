@@ -13,10 +13,8 @@ class LogsPage
 
     /**
      * Must match the menu slug registered in Admin::registerMenu() for this
-     * page. Hardcoded rather than echoing back $_GET['page'] for the
-     * "Limpar filtros" link/hidden field, so a clear-filters click can never
-     * land on a broken "?page=" (empty slug) if $_GET['page'] is ever
-     * missing/malformed for any reason.
+     * page - kept as a hidden field in the filter form so the GET
+     * submission (both "Filtrar" and "Limpar filtros") stays on this page.
      */
     private const PAGE_SLUG = 'robojacksparrow-logs';
 
@@ -35,10 +33,18 @@ class LogsPage
 
     public function render(): string
     {
-        $level = $this->stringParam('level');
-        $source = $this->stringParam('module');
-        $period = $this->stringParam('period');
-        $articleId = (int) ($_GET['post_id'] ?? 0);
+        // "Limpar filtros" is a submit button in the SAME form (not a
+        // separate <a href> pointing at a rebuilt admin URL) so clearing
+        // filters can never depend on admin_url()/menu-slug generation
+        // being right - it's a plain form submission the browser handles
+        // natively, and this flag alone decides to ignore every other
+        // field the browser resubmits alongside it.
+        $cleared = isset($_GET['rjs_clear_filters']);
+
+        $level = $cleared ? null : $this->stringParam('level');
+        $source = $cleared ? null : $this->stringParam('module');
+        $period = $cleared ? null : $this->stringParam('period');
+        $articleId = $cleared ? 0 : (int) ($_GET['post_id'] ?? 0);
 
         $rows = $this->logs->findFiltered([
             'level'      => $level,
@@ -71,8 +77,8 @@ class LogsPage
         $html .= '<p style="margin:0"><label>Periodo<br>' . $this->select('period', self::PERIODS, $period ?? '') . '</label></p>';
         $html .= '<p style="margin:0"><label>Post ID<br><input type="number" name="post_id" min="0" value="' . ($articleId > 0 ? $articleId : '0') . '" style="width:6em"></label></p>';
 
-        $html .= '<p style="margin:0"><button type="submit" class="button button-primary">Filtrar</button>'
-            . ' <a href="' . esc_url(admin_url('admin.php?page=' . self::PAGE_SLUG)) . '" class="button">Limpar filtros</a></p>';
+        $html .= '<p style="margin:0"><button type="submit" name="rjs_apply_filters" value="1" class="button button-primary">Filtrar</button>'
+            . ' <button type="submit" name="rjs_clear_filters" value="1" formnovalidate class="button">Limpar filtros</button></p>';
 
         $html .= '</form>';
 

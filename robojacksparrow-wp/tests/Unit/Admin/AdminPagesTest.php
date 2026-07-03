@@ -200,6 +200,68 @@ final class AdminPagesTest extends TestCase
         $this->assertSame('rss', $this->wpdb->sources[$id]['source_type']);
     }
 
+    public function testSourcesPageShowsPauseEditDeleteButtonsForEachSource(): void
+    {
+        $this->wpdb->sources[1] = [
+            'id' => 1, 'source_name' => 'Tech Blog', 'source_url' => 'https://example.com/feed',
+            'source_type' => 'rss', 'is_active' => 1, 'category_id' => null,
+            'scrape_frequency' => '4_hours', 'created_at' => '2026-01-01 00:00:00',
+        ];
+
+        $html = (new SourcesPage(new SourceRepository()))->render();
+
+        $this->assertStringContainsString('>Pausar<', $html);
+        $this->assertStringContainsString('>Editar<', $html);
+        $this->assertStringContainsString('>Excluir<', $html);
+    }
+
+    public function testSourcesPageCanAssignACategoryToASource(): void
+    {
+        $this->wpdb->categories['Tecnologia'] = 42;
+
+        $sources = new SourceRepository();
+        $page = new SourcesPage($sources);
+
+        $before = $page->render();
+        $this->assertStringContainsString('Tecnologia', $before, 'the category select must list real WP categories');
+
+        $_POST = [
+            'rjs_action' => 'add_source', 'rjs_nonce' => 'nonce-rjs_sources',
+            'source_name' => 'Tech Blog', 'source_url' => 'https://example.com/feed', 'category_id' => '42',
+        ];
+        $page->render();
+
+        $id = array_key_first($this->wpdb->sources);
+        $this->assertSame(42, $this->wpdb->sources[$id]['category_id']);
+    }
+
+    public function testSourcesPageEditFormIsPrefilledAndUpdatesTheSource(): void
+    {
+        $this->wpdb->sources[1] = [
+            'id' => 1, 'source_name' => 'Old Name', 'source_url' => 'https://example.com/old',
+            'source_type' => 'rss', 'is_active' => 1, 'category_id' => null,
+            'scrape_frequency' => '4_hours', 'created_at' => '2026-01-01 00:00:00',
+        ];
+
+        $page = new SourcesPage(new SourceRepository());
+
+        $_GET = ['edit' => '1'];
+        $html = $page->render();
+        $this->assertStringContainsString('Editar Fonte', $html);
+        $this->assertStringContainsString('value="Old Name"', $html);
+
+        $_GET = [];
+        $_POST = [
+            'rjs_action' => 'update_source', 'rjs_nonce' => 'nonce-rjs_sources', 'source_id' => '1',
+            'source_name' => 'New Name', 'source_url' => 'https://example.com/new', 'scrape_frequency' => 'hourly',
+        ];
+        $page->render();
+
+        $this->assertSame('New Name', $this->wpdb->sources[1]['source_name']);
+        $this->assertSame('https://example.com/new', $this->wpdb->sources[1]['source_url']);
+        $this->assertSame('hourly', $this->wpdb->sources[1]['scrape_frequency']);
+    }
+
     public function testSettingsPageSavesViaSettingRepository(): void
     {
         $settings = new SettingRepository(new Encryption(), new Logger());
@@ -364,6 +426,23 @@ final class AdminPagesTest extends TestCase
         $this->assertStringContainsString('desligado', $html);
         $this->assertStringContainsString('Meu Blog', $html);
         $this->assertStringContainsString('URL de site', $html);
+        $this->assertStringContainsString('>Pausar<', $html, 'must offer an immediate pause button right on this page too');
+    }
+
+    public function testAutopilotPagePauseButtonStopsASourceImmediately(): void
+    {
+        $this->wpdb->sources[1] = [
+            'id' => 1, 'source_name' => 'Meu Blog', 'source_url' => 'https://example.com/blog',
+            'source_type' => 'scraper', 'is_active' => 1, 'created_at' => '2026-01-01 00:00:00',
+        ];
+
+        $settings = new SettingRepository(new Encryption(), new Logger());
+        $page = new AutopilotPage($settings, new SourceRepository());
+
+        $_POST = ['rjs_action' => 'toggle_source', 'rjs_nonce' => 'nonce-rjs_autopilot_toggle_source', 'source_id' => '1'];
+        $page->render();
+
+        $this->assertSame(0, $this->wpdb->sources[1]['is_active']);
     }
 
     public function testAutopilotPageSavesEnabledStateAndPublishStatus(): void
@@ -428,18 +507,25 @@ final class AdminPagesTest extends TestCase
         $this->assertStringNotContainsString('Falhou', $htmlByPost);
     }
 
-    public function testLogsPageClearFiltersLinkIsAlwaysValidRegardlessOfGetPage(): void
+    public function testLogsPageClearFiltersButtonIgnoresEveryOtherFilterOnTheSameSubmission(): void
     {
-        // No 'page' key at all in $_GET - a scenario that previously broke
-        // the clear-filters link, since it echoed back $_GET['page'] and
-        // would render "?page=" (an empty, invalid page slug) instead of
-        // the real Logs page URL.
-        $_GET = ['level' => 'error'];
+        $this->wpdb->logs = [
+            1 => ['id' => 1, 'article_id' => 5, 'level' => 'info', 'source' => 'ScraperEngine::scrape', 'message' => 'Scraped ok', 'created_at' => '2026-01-01 00:00:00'],
+            2 => ['id' => 2, 'article_id' => 6, 'level' => 'error', 'source' => 'ContentEngine::generate', 'message' => 'Falhou', 'created_at' => '2026-01-02 00:00:00'],
+        ];
+
+        // "Limpar filtros" is a submit button in the SAME <form> as the
+        // filter fields, so the browser resubmits whatever was selected
+        // (level=error here) ALONGSIDE rjs_clear_filters=1. That flag alone
+        // must win - this is a plain form submission, not a hand-built URL,
+        // so it can't break the way a regenerated admin_url() link could.
+        $_GET = ['level' => 'error', 'rjs_clear_filters' => '1'];
 
         $html = (new LogsPage(new LogRepository()))->render();
 
-        $this->assertStringContainsString('admin.php?page=robojacksparrow-logs', $html);
-        $this->assertStringNotContainsString('?page="', $html, 'must never render an empty page slug');
+        $this->assertStringContainsString('Scraped ok', $html, 'clearing filters must show all logs again, ignoring the resubmitted level=error');
+        $this->assertStringContainsString('Falhou', $html);
+        $this->assertStringContainsString('name="rjs_clear_filters"', $html);
     }
 
     public function testQueuePageClearButtonRemovesOnlyCompletedAndFailedJobs(): void

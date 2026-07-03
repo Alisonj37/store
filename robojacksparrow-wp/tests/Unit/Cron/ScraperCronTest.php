@@ -43,6 +43,7 @@ final class ScraperCronTest extends TestCase
 
     public function testCollectsNewLinksAndEnqueuesWhenAutopilotIsEnabled(): void
     {
+        $this->wpdb->categories['Noticias'] = 3;
         $this->wpdb->sources[1] = [
             'id' => 1, 'source_name' => 'Blog X', 'source_url' => 'https://example.com/blog',
             'source_type' => 'scraper', 'is_active' => 1, 'category_id' => 3,
@@ -63,6 +64,7 @@ final class ScraperCronTest extends TestCase
         $this->assertSame('https://example.com/2026/01/first-new-article-slug', $first['source_url']);
         $this->assertSame('scraper', $first['source_type']);
         $this->assertSame(3, $first['category_id']);
+        $this->assertSame('Noticias', $first['category_name'], 'the category name must be resolved so handlePublish() actually applies it, not just the id');
         $this->assertSame('publish', $first['target_post_status']);
 
         $this->assertCount(2, $this->wpdb->queueRows);

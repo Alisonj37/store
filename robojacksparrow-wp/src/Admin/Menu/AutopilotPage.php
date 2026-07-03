@@ -7,6 +7,7 @@ namespace RoboJackSparrow\Admin\Menu;
 use RoboJackSparrow\Cron\ScrapeFrequency;
 use RoboJackSparrow\Database\Repositories\SettingRepository;
 use RoboJackSparrow\Database\Repositories\SourceRepository;
+use RoboJackSparrow\Publisher\WordPress\CategoryNameResolver;
 
 /**
  * Pagina dedicada para ligar/desligar o piloto automatico e ver, de relance,
@@ -17,6 +18,7 @@ use RoboJackSparrow\Database\Repositories\SourceRepository;
 class AutopilotPage
 {
     private const NONCE_ACTION = 'rjs_autopilot';
+    private const SOURCE_TOGGLE_NONCE_ACTION = 'rjs_autopilot_toggle_source';
 
     private const PUBLISH_STATUS_CHOICES = [
         'publish' => 'Publicar imediatamente',
@@ -97,8 +99,10 @@ class AutopilotPage
                 . '<a href="' . esc_url($sourcesUrl) . '">Adicionar uma fonte (feed RSS ou URL de site)</a>.</p>';
         }
 
+        $nonce = wp_create_nonce(self::SOURCE_TOGGLE_NONCE_ACTION);
+
         $html = '<table class="widefat striped"><thead><tr>'
-            . '<th>Nome</th><th>Tipo</th><th>Frequencia</th><th>Ativo</th><th>Ultima coleta</th>'
+            . '<th>Nome</th><th>Tipo</th><th>Categoria</th><th>Frequencia</th><th>Ativo</th><th>Ultima coleta</th><th>Acao</th>'
             . '</tr></thead><tbody>';
 
         $frequencyLabels = ScrapeFrequency::choices();
@@ -107,13 +111,17 @@ class AutopilotPage
             $type = self::SOURCE_TYPE_LABELS[$source->source_type] ?? (string) $source->source_type;
             $sourceFrequency = (string) ($source->scrape_frequency ?? '');
             $frequency = $frequencyLabels[$sourceFrequency] ?? $sourceFrequency;
+            $categoryName = CategoryNameResolver::nameFor(isset($source->category_id) ? (int) $source->category_id : null) ?? '-';
+            $isActive = (int) $source->is_active === 1;
 
             $html .= '<tr>';
             $html .= '<td>' . esc_html((string) $source->source_name) . '</td>';
             $html .= '<td>' . esc_html($type) . '</td>';
+            $html .= '<td>' . esc_html($categoryName) . '</td>';
             $html .= '<td>' . esc_html($frequency) . '</td>';
-            $html .= '<td>' . ((int) $source->is_active === 1 ? 'Sim' : 'Nao') . '</td>';
+            $html .= '<td>' . ($isActive ? 'Sim' : 'Nao (pausada)') . '</td>';
             $html .= '<td>' . esc_html((string) ($source->last_scraped_at ?? 'nunca')) . '</td>';
+            $html .= '<td>' . $this->renderToggleButton((int) $source->id, $isActive, $nonce) . '</td>';
             $html .= '</tr>';
         }
 
@@ -123,9 +131,34 @@ class AutopilotPage
         return $html;
     }
 
+    /**
+     * A quick pause/resume right here too - this is often the first place
+     * an admin looks when a source needs to stop immediately, not just the
+     * Fontes page.
+     */
+    private function renderToggleButton(int $sourceId, bool $isActive, string $nonce): string
+    {
+        $label = $isActive ? 'Pausar' : 'Ativar';
+
+        return '<form method="post" style="display:inline">'
+            . '<input type="hidden" name="rjs_action" value="toggle_source">'
+            . '<input type="hidden" name="rjs_nonce" value="' . esc_attr($nonce) . '">'
+            . '<input type="hidden" name="source_id" value="' . $sourceId . '">'
+            . '<button type="submit" class="button">' . esc_html($label) . '</button>'
+            . '</form>';
+    }
+
     private function handleSubmission(): void
     {
-        if (($_POST['rjs_action'] ?? '') !== 'save_autopilot') {
+        $action = (string) ($_POST['rjs_action'] ?? '');
+
+        if ($action === 'toggle_source') {
+            $this->handleToggleSource();
+
+            return;
+        }
+
+        if ($action !== 'save_autopilot') {
             return;
         }
 
@@ -138,6 +171,20 @@ class AutopilotPage
         $publishStatus = (string) ($_POST['rjs_autopilot_publish_status'] ?? 'draft');
         if (array_key_exists($publishStatus, self::PUBLISH_STATUS_CHOICES)) {
             $this->settings->set('rjs_autopilot_publish_status', $publishStatus);
+        }
+    }
+
+    private function handleToggleSource(): void
+    {
+        if (!current_user_can('manage_options') || !wp_verify_nonce((string) ($_POST['rjs_nonce'] ?? ''), self::SOURCE_TOGGLE_NONCE_ACTION)) {
+            return;
+        }
+
+        $id = (int) ($_POST['source_id'] ?? 0);
+        $source = $id > 0 ? $this->sources->find($id) : null;
+
+        if ($source !== null) {
+            $this->sources->update($id, ['is_active' => $source->is_active ? 0 : 1]);
         }
     }
 }

@@ -253,6 +253,42 @@ function get_permalink($postId) { return "https://example.test/?p={$postId}"; }
 function admin_url($path = '') { return 'https://example.test/wp-admin/' . ltrim((string) $path, '/'); }
 function get_edit_post_link($postId) { return admin_url('post.php?post=' . (int) $postId . '&action=edit'); }
 
+function add_query_arg(...$args)
+{
+    if (is_array($args[0])) {
+        $params = $args[0];
+        $url = $args[1] ?? ($_SERVER['REQUEST_URI'] ?? '');
+    } else {
+        $params = [$args[0] => $args[1] ?? ''];
+        $url = $args[2] ?? ($_SERVER['REQUEST_URI'] ?? '');
+    }
+
+    $parts = parse_url((string) $url);
+    parse_str($parts['query'] ?? '', $query);
+    foreach ($params as $key => $value) {
+        $query[$key] = $value;
+    }
+
+    $qs = http_build_query($query);
+
+    return ($parts['path'] ?? '') . ($qs !== '' ? '?' . $qs : '');
+}
+
+function remove_query_arg($keys, $url = null)
+{
+    $url = $url ?? ($_SERVER['REQUEST_URI'] ?? '');
+    $parts = parse_url((string) $url);
+    parse_str($parts['query'] ?? '', $query);
+
+    foreach ((array) $keys as $key) {
+        unset($query[$key]);
+    }
+
+    $qs = http_build_query($query);
+
+    return ($parts['path'] ?? '') . ($qs !== '' ? '?' . $qs : '');
+}
+
 function get_term_by($field, $value, $taxonomy)
 {
     global $wpdb;
