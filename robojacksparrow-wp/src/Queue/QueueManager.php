@@ -9,6 +9,9 @@ use wpdb;
 
 class QueueManager
 {
+    /** Minutes a job may sit in 'processing' before being reclaimed as stuck. */
+    private const STALE_PROCESSING_MINUTES = 15;
+
     private wpdb $db;
     private Logger $logger;
     private string $queueTable;
@@ -73,7 +76,11 @@ class QueueManager
                  LIMIT 1
                  FOR UPDATE",
                 'pending',
-                current_time('mysql')
+                // available_at is always written in UTC (gmdate(), see
+                // enqueue()/release()) - the comparison must use UTC too,
+                // not the site's configured local timezone, or jobs sit
+                // stuck/become available early by the UTC offset.
+                current_time('mysql', true)
             )
         );
 
@@ -153,6 +160,34 @@ class QueueManager
             ['%s', '%d', '%s', '%s'],
             ['%d']
         );
+    }
+
+    /**
+     * Reclaims jobs stuck in 'processing' because the PHP process handling
+     * them was killed before it could call markCompleted()/markFailed()/
+     * release() (shared-hosting OOM killer, hard execution-time cutoff).
+     * Without this, such rows would sit in 'processing' forever - never
+     * selected by popNextAvailable() (which only looks at 'pending') and
+     * never retried. Called at the start of every Worker batch.
+     *
+     * @return int Number of jobs reclaimed.
+     */
+    public function reclaimStaleProcessingJobs(): int
+    {
+        $threshold = gmdate('Y-m-d H:i:s', time() - self::STALE_PROCESSING_MINUTES * 60);
+
+        $result = $this->db->query(
+            $this->db->prepare(
+                "UPDATE {$this->queueTable}
+                 SET status = 'pending', available_at = %s, updated_at = %s
+                 WHERE status = 'processing' AND started_at IS NOT NULL AND started_at <= %s",
+                current_time('mysql', true),
+                current_time('mysql', true),
+                $threshold
+            )
+        );
+
+        return is_int($result) ? $result : 0;
     }
 
     public function updateArticleStatus(int $articleId, string $status, ?string $errorMessage = null): void

@@ -114,4 +114,19 @@ final class PostPublisherTest extends TestCase
         $this->assertNull($result->getFeaturedImageId());
         $this->assertArrayNotHasKey($result->getPostId(), $this->wpdb->thumbnails);
     }
+
+    public function testFeaturedImageFailureIsNonFatalEvenForANonPublisherExceptionThrowable(): void
+    {
+        // wp_insert_attachment()/wp_generate_attachment_metadata() are real
+        // WP-core calls that can raise a raw TypeError/Error, not just our
+        // own PublisherException - the article must still publish.
+        $this->wpdb->throwTypeErrorOnAttachment = true;
+
+        $request = new PublishRequest('T', '<p>x</p>', 'S', 'D', featuredImage: $this->featuredImage());
+        $result = $this->makePublisher()->publish($request);
+
+        $this->assertGreaterThan(0, $result->getPostId(), 'the post itself must still be published');
+        $this->assertNull($result->getFeaturedImageId());
+        $this->assertSame('S', $this->wpdb->postMeta[$result->getPostId()]['_rjs_seo_title'], 'SEO must still be applied after the image failure');
+    }
 }

@@ -55,6 +55,11 @@ function add_filter($hook, $callback, $priority = 10, $args = 1): void
     $GLOBALS['__rjs_hooks']['filter'][$hook][] = $callback;
 }
 
+function has_filter($hook, $callback = false): bool
+{
+    return !empty($GLOBALS['__rjs_hooks']['filter'][$hook]);
+}
+
 function apply_filters($hook, $value, ...$args)
 {
     foreach ($GLOBALS['__rjs_hooks']['filter'][$hook] ?? [] as $callback) {
@@ -108,7 +113,20 @@ function wp_clear_scheduled_hook($hook) { unset($GLOBALS['__rjs_cron'][$hook]); 
 
 // ---- Misc formatting / sanitization -----------------------------------------
 
-function current_time($type) { return gmdate('Y-m-d H:i:s'); }
+// Simulates a WordPress site configured for a non-UTC timezone: tests can
+// set $GLOBALS['__rjs_site_utc_offset_hours'] to a nonzero value to verify
+// code that must stay UTC-consistent (current_time($type, true)) doesn't
+// regress into comparing UTC-written timestamps against site-local ones.
+$GLOBALS['__rjs_site_utc_offset_hours'] = 0;
+
+function current_time($type, $gmt = 0)
+{
+    if ($gmt) {
+        return gmdate('Y-m-d H:i:s');
+    }
+
+    return gmdate('Y-m-d H:i:s', time() + (int) ($GLOBALS['__rjs_site_utc_offset_hours'] * 3600));
+}
 function wp_json_encode($data) { return json_encode($data); }
 function wp_mkdir_p($dir) { return @mkdir($dir, 0755, true); }
 function esc_html($text) { return htmlspecialchars((string) $text, ENT_QUOTES, 'UTF-8'); }

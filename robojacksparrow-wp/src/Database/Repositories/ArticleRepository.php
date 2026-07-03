@@ -51,6 +51,13 @@ class ArticleRepository
         return $row instanceof \stdClass ? $row : null;
     }
 
+    public function update(int $id, array $data): bool
+    {
+        $data['updated_at'] = current_time('mysql');
+
+        return (bool) $this->db->update($this->table, $data, ['id' => $id]);
+    }
+
     public function count(?string $status = null): int
     {
         if ($status !== null) {

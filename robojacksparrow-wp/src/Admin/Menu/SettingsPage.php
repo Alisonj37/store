@@ -64,11 +64,6 @@ class SettingsPage
 
             $value = sanitize_text_field((string) $_POST[$key]);
             $this->settings->set($key, $value);
-
-            // Bridge: also mirror into WP's native options so existing
-            // get_option() call sites (e.g. ContentEngine, Fase 5) keep
-            // working without needing to depend on SettingRepository.
-            update_option($key, $value);
         }
     }
 }

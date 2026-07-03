@@ -13,12 +13,25 @@ use RoboJackSparrow\Admin\Menu\QueuePage;
 use RoboJackSparrow\Admin\Menu\SettingsPage;
 use RoboJackSparrow\Admin\Menu\SourcesPage;
 use RoboJackSparrow\Ai\HealthMonitor;
+use RoboJackSparrow\Ai\LLMRouter;
+use RoboJackSparrow\Ai\Memory\MemoryBuffer;
+use RoboJackSparrow\Ai\Memory\MemoryStore;
+use RoboJackSparrow\Ai\Providers\AnthropicProvider;
+use RoboJackSparrow\Ai\Providers\DeepSeekProvider;
+use RoboJackSparrow\Ai\Providers\GeminiProvider;
+use RoboJackSparrow\Ai\Providers\GroqProvider;
+use RoboJackSparrow\Ai\Providers\OpenAIProvider;
 use RoboJackSparrow\Api\Controllers\ArticleController;
 use RoboJackSparrow\Api\Controllers\LogController;
 use RoboJackSparrow\Api\Controllers\QueueController;
 use RoboJackSparrow\Api\Controllers\SettingsController;
 use RoboJackSparrow\Api\Controllers\SourceController;
 use RoboJackSparrow\Api\RestApi;
+use RoboJackSparrow\Content\ContentEngine;
+use RoboJackSparrow\Content\Faq\FaqExtractor;
+use RoboJackSparrow\Content\Outline\OutlineGenerator;
+use RoboJackSparrow\Content\Prompts\PromptLibrary;
+use RoboJackSparrow\Content\Seo\SeoGenerator;
 use RoboJackSparrow\Cron\CronManager;
 use RoboJackSparrow\Database\Repositories\ArticleRepository;
 use RoboJackSparrow\Database\Repositories\LogRepository;
@@ -26,8 +39,24 @@ use RoboJackSparrow\Database\Repositories\QueueRepository as QueueRepositoryMode
 use RoboJackSparrow\Database\Repositories\SettingRepository;
 use RoboJackSparrow\Database\Repositories\SourceRepository;
 use RoboJackSparrow\Database\Schema;
+use RoboJackSparrow\Image\ImageEngine;
+use RoboJackSparrow\Image\Providers\KeiIaProvider;
+use RoboJackSparrow\Image\Providers\PexelsProvider;
+use RoboJackSparrow\Image\Providers\PixabayProvider;
+use RoboJackSparrow\Image\Providers\ReplicateProvider;
+use RoboJackSparrow\Image\Providers\UnsplashProvider;
+use RoboJackSparrow\Publisher\WordPress\MediaUploader;
+use RoboJackSparrow\Publisher\WordPress\PostPublisher;
+use RoboJackSparrow\Publisher\WordPress\SeoIntegrator;
+use RoboJackSparrow\Publisher\WordPress\TaxonomyManager;
+use RoboJackSparrow\Queue\Jobs\JobRegistry;
 use RoboJackSparrow\Queue\QueueManager;
 use RoboJackSparrow\Queue\Worker;
+use RoboJackSparrow\Research\ResearchEngine;
+use RoboJackSparrow\Research\TavilyDriver;
+use RoboJackSparrow\Scraper\Drivers\FirecrawlDriver;
+use RoboJackSparrow\Scraper\Drivers\JinaAiDriver;
+use RoboJackSparrow\Scraper\ScraperEngine;
 
 final class Plugin
 {
@@ -38,6 +67,7 @@ final class Plugin
     private Worker $worker;
     private CronManager $cronManager;
     private RestApi $restApi;
+    private JobRegistry $jobRegistry;
     private ?Admin $admin = null;
 
     public static function instance(): self
@@ -55,12 +85,16 @@ final class Plugin
         $this->queueManager = new QueueManager($this->logger);
         $this->worker = new Worker($this->queueManager, $this->logger);
         $this->cronManager = new CronManager();
-        $this->restApi = $this->buildRestApi();
+
+        $settings = new SettingRepository(new Encryption(), $this->logger);
+
+        $this->restApi = $this->buildRestApi($settings);
+        $this->jobRegistry = $this->buildJobRegistry($settings);
 
         $this->registerHooks();
 
         if (is_admin()) {
-            $this->admin = $this->buildAdmin();
+            $this->admin = $this->buildAdmin($settings);
             $this->admin->register();
         }
     }
@@ -69,10 +103,8 @@ final class Plugin
      * REST routes must be registered regardless of is_admin() - REST API
      * requests are not considered "admin" context by WordPress.
      */
-    private function buildRestApi(): RestApi
+    private function buildRestApi(SettingRepository $settings): RestApi
     {
-        $settings = new SettingRepository(new Encryption());
-
         return new RestApi(
             new ArticleController(new ArticleRepository()),
             new QueueController(new QueueRepositoryModel()),
@@ -82,9 +114,8 @@ final class Plugin
         );
     }
 
-    private function buildAdmin(): Admin
+    private function buildAdmin(SettingRepository $settings): Admin
     {
-        $settings = new SettingRepository(new Encryption());
         $articles = new ArticleRepository();
         $queue = new QueueRepositoryModel();
         $logs = new LogRepository();
@@ -102,10 +133,86 @@ final class Plugin
         );
     }
 
+    /**
+     * Wires the Queue -> {Scraper, Research, Content, Image, Publisher}
+     * pipeline: without this, jobs popped by the Worker have no registered
+     * handler and always fail (see JobRegistry's docblock).
+     */
+    private function buildJobRegistry(SettingRepository $settings): JobRegistry
+    {
+        $health = new HealthMonitor();
+
+        $llmProviders = [
+            'openai'    => new OpenAIProvider((string) $settings->get('rjs_openai_api_key', '')),
+            'anthropic' => new AnthropicProvider((string) $settings->get('rjs_anthropic_api_key', '')),
+            'groq'      => new GroqProvider((string) $settings->get('rjs_groq_api_key', '')),
+            'gemini'    => new GeminiProvider((string) $settings->get('rjs_gemini_api_key', '')),
+            'deepseek'  => new DeepSeekProvider((string) $settings->get('rjs_deepseek_api_key', '')),
+        ];
+        $llmRouter = new LLMRouter($llmProviders, $health, $this->logger);
+
+        // JinaAiDriver works keyless (lower rate limit); Firecrawl requires
+        // rjs_firecrawl_api_key, which is not yet exposed on the API Keys
+        // admin page (Fase 8 only lists the keys explicitly requested
+        // there) - the cascade still works via Jina alone until it is added.
+        $scraperEngine = new ScraperEngine(
+            [
+                new JinaAiDriver(),
+                new FirecrawlDriver((string) $settings->get('rjs_firecrawl_api_key', '')),
+            ],
+            $this->logger
+        );
+
+        $research = new ResearchEngine(
+            new TavilyDriver((string) $settings->get('rjs_tavily_api_key', '')),
+            $this->logger
+        );
+
+        $prompts = new PromptLibrary();
+        $contentEngine = new ContentEngine(
+            $llmRouter,
+            new MemoryBuffer(new MemoryStore()),
+            new SeoGenerator(),
+            new FaqExtractor($llmRouter, $prompts),
+            new OutlineGenerator(),
+            $prompts,
+            $settings,
+            $this->logger
+        );
+
+        $imageProviders = [
+            new KeiIaProvider((string) $settings->get('rjs_kei_api_key', '')),
+            new ReplicateProvider((string) $settings->get('rjs_replicate_api_key', '')),
+            new UnsplashProvider((string) $settings->get('rjs_unsplash_api_key', '')),
+            new PexelsProvider((string) $settings->get('rjs_pexels_api_key', '')),
+            new PixabayProvider((string) $settings->get('rjs_pixabay_api_key', '')),
+        ];
+        $imageEngine = new ImageEngine($imageProviders, $this->logger);
+
+        $postPublisher = new PostPublisher(
+            new TaxonomyManager(),
+            new MediaUploader(),
+            new SeoIntegrator(),
+            $this->logger
+        );
+
+        return new JobRegistry(
+            new ArticleRepository(),
+            $this->queueManager,
+            $scraperEngine,
+            $research,
+            $contentEngine,
+            $imageEngine,
+            $postPublisher,
+            $this->logger
+        );
+    }
+
     private function registerHooks(): void
     {
         $this->cronManager->register();
         $this->restApi->register();
+        $this->jobRegistry->register();
 
         add_action('rjs_worker_process', [$this->worker, 'processNextBatch']);
         add_action('init', [$this, 'loadTextdomain']);

@@ -34,6 +34,11 @@ class Worker
         }
         ignore_user_abort(true);
 
+        // Reclaim jobs stuck in 'processing' by a worker run that never
+        // finished (host OOM-killed the process, hard execution-time kill),
+        // so they aren't lost forever.
+        $this->queue->reclaimStaleProcessingJobs();
+
         $startTime = time();
         $processed = 0;
 
@@ -57,10 +62,14 @@ class Worker
             try {
                 $this->dispatch($job);
                 $this->queue->markCompleted($job);
-                $processed++;
             } catch (Throwable $e) {
                 $this->handleFailure($job, $e);
             }
+
+            // Counts attempted jobs, not just successful ones: batchSize
+            // exists to bound work per cron tick even when jobs fail fast
+            // (e.g. a misconfigured provider), not just to bound successes.
+            $processed++;
         }
 
         $this->logger->info('Worker batch completed', ['processed' => $processed]);
@@ -68,20 +77,36 @@ class Worker
 
     /**
      * Dispatches a job to its handler via a per-type filter, so concrete job
-     * handlers (ScrapeJob, GenerateContentJob, ...) can register themselves
-     * in later phases without Worker knowing about them upfront:
+     * handlers (JobRegistry, or third-party addons) can register themselves
+     * without Worker knowing about them upfront:
      *
      *   add_filter('rjs_dispatch_job_generate_content', function ($handled, Job $job) {
      *       // ... handle it ...
      *       return true;
      *   }, 10, 2);
+     *
+     * has_filter() distinguishes "nothing registered for this job type" from
+     * "a handler ran"; a handler must explicitly return `true` to count as
+     * successful, so a handler that returns false/null/void (e.g. forgot a
+     * return statement) is treated as a failure rather than silently as
+     * success, and is retried instead of being marked completed.
      */
     private function dispatch(Job $job): void
     {
-        $handled = apply_filters('rjs_dispatch_job_' . $job->getType(), null, $job);
+        $hook = 'rjs_dispatch_job_' . $job->getType();
 
-        if ($handled === null) {
+        if (!has_filter($hook)) {
             throw new RuntimeException(sprintf('No handler registered for job type "%s"', $job->getType()));
+        }
+
+        $handled = apply_filters($hook, null, $job);
+
+        if ($handled !== true) {
+            throw new RuntimeException(sprintf(
+                'Handler for job type "%s" did not report success (returned %s)',
+                $job->getType(),
+                var_export($handled, true)
+            ));
         }
     }
 

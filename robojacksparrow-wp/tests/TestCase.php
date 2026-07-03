@@ -29,6 +29,7 @@ abstract class TestCase extends BaseTestCase
         $GLOBALS['__rjs_menu'] = [];
         $GLOBALS['__rjs_submenu'] = [];
         $GLOBALS['__rjs_routes'] = [];
+        $GLOBALS['__rjs_site_utc_offset_hours'] = 0;
         $_GET = [];
         $_POST = [];
 

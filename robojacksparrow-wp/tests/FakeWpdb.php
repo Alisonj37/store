@@ -72,7 +72,35 @@ class wpdb
 
     public function query($sql)
     {
+        if (str_contains($sql, 'rjs_queue') && str_contains($sql, "status = 'pending'") && str_contains($sql, "WHERE status = 'processing'")) {
+            return $this->reclaimStaleProcessing();
+        }
+
         return 1;
+    }
+
+    /**
+     * Backs QueueManager::reclaimStaleProcessingJobs(). Prepared args are
+     * [availableAt, updatedAt, threshold] in that order.
+     */
+    private function reclaimStaleProcessing(): int
+    {
+        $availableAt = $this->lastPrepareArgs[0] ?? gmdate('Y-m-d H:i:s');
+        $updatedAt = $this->lastPrepareArgs[1] ?? gmdate('Y-m-d H:i:s');
+        $threshold = $this->lastPrepareArgs[2] ?? gmdate('Y-m-d H:i:s');
+
+        $reclaimed = 0;
+        foreach ($this->queueRows as $id => $row) {
+            $startedAt = $row['started_at'] ?? null;
+            if (($row['status'] ?? '') === 'processing' && $startedAt !== null && $startedAt <= $threshold) {
+                $this->queueRows[$id]['status'] = 'pending';
+                $this->queueRows[$id]['available_at'] = $availableAt;
+                $this->queueRows[$id]['updated_at'] = $updatedAt;
+                $reclaimed++;
+            }
+        }
+
+        return $reclaimed;
     }
 
     public function get_var($query)
@@ -342,6 +370,7 @@ class wpdb
         $this->insert_id = 0;
         $this->uploadFailureMessage = '';
         $this->forceInsertPostFailure = false;
+        $this->throwTypeErrorOnAttachment = false;
         $this->nextArticleId = 1;
         $this->nextQueueId = 1;
         $this->nextLogId = 1;
@@ -444,8 +473,18 @@ class wpdb
         return ['file' => '/tmp/fake-wp/uploads/' . $filename, 'url' => 'https://example.test/uploads/' . $filename, 'error' => false];
     }
 
+    public bool $throwTypeErrorOnAttachment = false;
+
     public function insertAttachment(array $data, string $file, int $postId): int
     {
+        if ($this->throwTypeErrorOnAttachment) {
+            // Simulates a raw WP-core/third-party-hook failure that is NOT
+            // a PublisherException (e.g. a malformed image reaching
+            // wp_generate_attachment_metadata()), to prove callers degrade
+            // gracefully on any Throwable, not just our own exception type.
+            throw new \TypeError('Simulated malformed attachment data');
+        }
+
         return $this->nextAttachmentId++;
     }
 

@@ -11,6 +11,7 @@ use RoboJackSparrow\Api\Controllers\SettingsController;
 use RoboJackSparrow\Api\Controllers\SourceController;
 use RoboJackSparrow\Api\Middleware\AuthMiddleware;
 use RoboJackSparrow\Core\Encryption;
+use RoboJackSparrow\Core\Logger;
 use RoboJackSparrow\Database\Repositories\ArticleRepository;
 use RoboJackSparrow\Database\Repositories\LogRepository;
 use RoboJackSparrow\Database\Repositories\QueueRepository;
@@ -80,7 +81,7 @@ final class ApiControllersTest extends TestCase
 
     public function testSettingsControllerNeverReturnsARawSensitiveValue(): void
     {
-        $settingRepo = new SettingRepository(new Encryption());
+        $settingRepo = new SettingRepository(new Encryption(), new Logger());
         $settingRepo->set('rjs_tavily_api_key', 'tvly-real-secret-value', 'string', true);
 
         $controller = new SettingsController($settingRepo);
@@ -94,7 +95,7 @@ final class ApiControllersTest extends TestCase
 
     public function testSettingsControllerUpdateAutoDetectsApiKeySuffixAsSensitive(): void
     {
-        $settingRepo = new SettingRepository(new Encryption());
+        $settingRepo = new SettingRepository(new Encryption(), new Logger());
         $controller = new SettingsController($settingRepo);
 
         $response = $controller->update(new WP_REST_Request(['key' => 'rjs_openai_api_key', 'value' => 'sk-new-key']));
@@ -106,7 +107,7 @@ final class ApiControllersTest extends TestCase
 
     public function testSettingsControllerShow404sForUnknownKey(): void
     {
-        $controller = new SettingsController(new SettingRepository(new Encryption()));
+        $controller = new SettingsController(new SettingRepository(new Encryption(), new Logger()));
 
         $this->assertSame(404, $controller->show(new WP_REST_Request(['key' => 'rjs_never_set']))->get_status());
     }

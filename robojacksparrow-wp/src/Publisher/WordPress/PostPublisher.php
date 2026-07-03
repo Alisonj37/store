@@ -9,6 +9,7 @@ use RoboJackSparrow\Core\Logger;
 use RoboJackSparrow\Publisher\Dto\PublishRequest;
 use RoboJackSparrow\Publisher\Dto\PublishResult;
 use RoboJackSparrow\Publisher\PublisherException;
+use Throwable;
 
 /**
  * Wrapper de wp_insert_post: cria/agenda o post, resolve categoria/tags,
@@ -70,7 +71,12 @@ class PostPublisher
 
     /**
      * A featured image failure must not lose an otherwise-valid article:
-     * log it and publish without one instead of throwing.
+     * log it and publish without one instead of throwing. Catches every
+     * Throwable, not just PublisherException - MediaUploader calls several
+     * native WP functions (wp_upload_bits, wp_insert_attachment,
+     * wp_generate_attachment_metadata) that can raise a raw TypeError/Error
+     * (malformed image, a third-party media hook misbehaving) rather than
+     * our own exception type, and those must degrade the same way.
      */
     private function tryAttachFeaturedImage(int $postId, PublishRequest $request): ?int
     {
@@ -81,7 +87,7 @@ class PostPublisher
 
         try {
             return $this->media->attachFeaturedImage($postId, $image, $request->getTitle());
-        } catch (PublisherException $e) {
+        } catch (Throwable $e) {
             $this->logger->warning('Failed to attach featured image, publishing without one', [
                 'post_id' => $postId,
                 'error'   => $e->getMessage(),

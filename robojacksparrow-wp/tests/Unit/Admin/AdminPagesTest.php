@@ -11,6 +11,7 @@ use RoboJackSparrow\Admin\Menu\SettingsPage;
 use RoboJackSparrow\Admin\Menu\SourcesPage;
 use RoboJackSparrow\Ai\HealthMonitor;
 use RoboJackSparrow\Core\Encryption;
+use RoboJackSparrow\Core\Logger;
 use RoboJackSparrow\Database\Repositories\ArticleRepository;
 use RoboJackSparrow\Database\Repositories\LogRepository;
 use RoboJackSparrow\Database\Repositories\QueueRepository;
@@ -91,9 +92,9 @@ final class AdminPagesTest extends TestCase
         $this->assertSame([], $this->wpdb->sources);
     }
 
-    public function testSettingsPageSavesAndBridgesIntoNativeOptions(): void
+    public function testSettingsPageSavesViaSettingRepository(): void
     {
-        $settings = new SettingRepository(new Encryption());
+        $settings = new SettingRepository(new Encryption(), new Logger());
         $_POST = [
             'rjs_action' => 'save_settings',
             'rjs_nonce'  => 'nonce-rjs_settings',
@@ -102,14 +103,17 @@ final class AdminPagesTest extends TestCase
 
         $html = (new SettingsPage($settings))->render();
 
+        // SettingRepository is the single source of truth for these keys -
+        // ContentEngine (Fase 5) reads from it directly, so there is no
+        // native wp_options mirror to keep in sync anymore.
         $this->assertSame('en_US', $settings->get('rjs_content_language'));
-        $this->assertSame('en_US', $GLOBALS['__rjs_options']['rjs_content_language']);
+        $this->assertArrayNotHasKey('rjs_content_language', $GLOBALS['__rjs_options']);
         $this->assertStringContainsString('value="en_US"', $html);
     }
 
     public function testApiKeysPageNeverEchoesTheRawSecretBackAndBlankFieldsAreNoOps(): void
     {
-        $settings = new SettingRepository(new Encryption());
+        $settings = new SettingRepository(new Encryption(), new Logger());
         $page = new ApiKeysPage($settings);
 
         $before = $page->render();

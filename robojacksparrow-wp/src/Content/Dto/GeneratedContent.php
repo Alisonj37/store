@@ -86,8 +86,8 @@ final class GeneratedContent
     }
 
     /**
-     * Tokens spent on outline + section generation. Does not include the
-     * FAQ-extraction call (tracked separately by LLMRouter/Logger).
+     * Total tokens spent generating this article: outline + all sections +
+     * FAQ extraction.
      */
     public function getTokensUsed(): int
     {

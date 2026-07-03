@@ -14,6 +14,7 @@ use RoboJackSparrow\Content\Outline\OutlineGenerator;
 use RoboJackSparrow\Content\Prompts\PromptLibrary;
 use RoboJackSparrow\Content\Seo\SeoGenerator;
 use RoboJackSparrow\Core\Logger;
+use RoboJackSparrow\Database\Repositories\SettingRepository;
 use RoboJackSparrow\Research\Dto\ResearchData;
 use RoboJackSparrow\Scraper\Dto\ScrapedContent;
 
@@ -34,6 +35,7 @@ class ContentEngine
         private FaqExtractor $faq,
         private OutlineGenerator $outlineGenerator,
         private PromptLibrary $prompts,
+        private SettingRepository $settings,
         private Logger $logger
     ) {
     }
@@ -53,9 +55,9 @@ class ContentEngine
                 'title'             => $source->getTitle(),
                 'content'           => mb_substr($source->getText(), 0, 8000),
                 'research_briefing' => $this->briefingOrFallback($briefing),
-                'language'          => get_option('rjs_content_language', 'pt_BR'),
-                'tone'              => get_option('rjs_content_tone', 'professional'),
-                'word_count'        => get_option('rjs_target_word_count', 1500),
+                'language'          => $this->settings->get('rjs_content_language', 'pt_BR'),
+                'tone'              => $this->settings->get('rjs_content_tone', 'professional'),
+                'word_count'        => $this->settings->get('rjs_target_word_count', 1500),
             ]),
             isJsonMode: true,
             maxTokens: 2048,
@@ -83,6 +85,7 @@ class ContentEngine
         // === ETAPA 3: FAQ ===
         $this->logger->info('Starting FAQ extraction', ['article_id' => $articleId]);
         $faqs = $this->faq->extract($fullContent);
+        $totalTokens += $this->faq->getLastTokensUsed();
 
         // === ETAPA 4: SEO ===
         $this->logger->info('Generating SEO data', ['article_id' => $articleId]);
@@ -132,6 +135,13 @@ class ContentEngine
             temperature: 0.7
         ));
 
+        // Store as a (user, assistant) pair, not just the assistant reply:
+        // some providers (Anthropic's Messages API) require context messages
+        // to strictly alternate user/assistant starting with user, and would
+        // reject the request once a 2nd section makes contextMemory contain
+        // two assistant entries in a row. Kept short (not the full prompt)
+        // so memory stays compact across many sections.
+        $this->memory->push($contextKey, 'user', sprintf('Escreva a secao: %s', $section['title']), 0);
         $this->memory->push($contextKey, 'assistant', $response->getContent(), $response->getTokensUsed());
 
         return [

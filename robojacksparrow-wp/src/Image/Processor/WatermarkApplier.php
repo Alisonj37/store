@@ -56,6 +56,19 @@ class WatermarkApplier
         return $output;
     }
 
+    /**
+     * Overlays span the full canvas (potentially millions of pixels), so
+     * this uses GD's native imagecopymerge() (C-speed) rather than the
+     * manual per-pixel blend used for logos. imagecopymerge()'s well-known
+     * alpha bug only manifests when the SOURCE image itself carries partial
+     * transparency; overlay assets are expected to be fully opaque images
+     * (the semi-transparency here comes entirely from the $opacity blend
+     * percentage, not from the asset's own alpha channel), so the bug does
+     * not apply and correctness is unaffected. On shared hosting, a
+     * pure-PHP pixel loop over a full 1080p+ image can by itself consume
+     * most of a Worker job's execution-time budget; this keeps the cost to
+     * a handful of native GD calls instead of ~8M PHP-level ones.
+     */
     private function applyOverlay(GdImage $image, string $overlayPath, int $opacity): void
     {
         $overlay = $this->loadImage($overlayPath);
@@ -63,12 +76,10 @@ class WatermarkApplier
         $height = imagesy($image);
 
         $resized = imagecreatetruecolor($width, $height);
-        imagealphablending($resized, false);
-        imagesavealpha($resized, true);
         imagecopyresampled($resized, $overlay, 0, 0, 0, 0, $width, $height, imagesx($overlay), imagesy($overlay));
         imagedestroy($overlay);
 
-        $this->blendWithOpacity($image, $resized, 0, 0, $opacity);
+        imagecopymerge($image, $resized, 0, 0, 0, 0, $width, $height, max(0, min(100, $opacity)));
         imagedestroy($resized);
     }
 

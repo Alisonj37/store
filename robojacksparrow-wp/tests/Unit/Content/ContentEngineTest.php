@@ -17,7 +17,9 @@ use RoboJackSparrow\Content\Faq\FaqExtractor;
 use RoboJackSparrow\Content\Outline\OutlineGenerator;
 use RoboJackSparrow\Content\Prompts\PromptLibrary;
 use RoboJackSparrow\Content\Seo\SeoGenerator;
+use RoboJackSparrow\Core\Encryption;
 use RoboJackSparrow\Core\Logger;
+use RoboJackSparrow\Database\Repositories\SettingRepository;
 use RoboJackSparrow\Research\Dto\ResearchData;
 use RoboJackSparrow\Research\Dto\ResearchSource;
 use RoboJackSparrow\Scraper\Dto\ScrapedContent;
@@ -38,6 +40,7 @@ final class ContentEngineTest extends TestCase
             new FaqExtractor($llm, $prompts),
             new OutlineGenerator(),
             $prompts,
+            new SettingRepository(new Encryption(), new Logger()),
             new Logger()
         );
     }
@@ -71,7 +74,7 @@ final class ContentEngineTest extends TestCase
         $this->assertStringContainsString('<h2>Perguntas Frequentes</h2>', $result->getHtmlContent());
         $this->assertSame('FAQPage', $result->getSchemaFaq()['@type']);
         $this->assertSame(['palavra-chave-1', 'palavra-chave-2'], $result->getFocusKeywords());
-        $this->assertSame(900, $result->getTokensUsed(), 'outline(500) + 2 sections(200 each) = 900; FAQ tokens are not counted');
+        $this->assertSame(1050, $result->getTokensUsed(), 'outline(500) + 2 sections(200 each) + faq(150) = 1050');
 
         // Proves the Tavily briefing is actually injected into the prompts.
         $this->assertStringContainsString('Resposta verificada ABC sobre o lancamento do robo.', $provider->prompts[0]);
@@ -97,7 +100,7 @@ final class ContentEngineTest extends TestCase
         $store = new MemoryStore();
         $llm = new LLMRouter(['test' => new ScriptedProvider()], new HealthMonitor(), new Logger());
         $prompts = new PromptLibrary();
-        $engine = new ContentEngine($llm, new MemoryBuffer($store), new SeoGenerator(), new FaqExtractor($llm, $prompts), new OutlineGenerator(), $prompts, new Logger());
+        $engine = new ContentEngine($llm, new MemoryBuffer($store), new SeoGenerator(), new FaqExtractor($llm, $prompts), new OutlineGenerator(), $prompts, new SettingRepository(new Encryption(), new Logger()), new Logger());
 
         $source = new ScrapedContent(url: 'x', title: 'X', text: 'text', html: null);
         $research = new ResearchData([], [], null, [], true);
@@ -105,8 +108,9 @@ final class ContentEngineTest extends TestCase
         $engine->generate(1, $source, $research);
         $engine->generate(2, $source, $research);
 
-        $this->assertCount(2, $store->getAll('article_1'));
-        $this->assertCount(2, $store->getAll('article_2'));
+        // 2 sections x (user, assistant) pair each = 4 entries per article.
+        $this->assertCount(4, $store->getAll('article_1'));
+        $this->assertCount(4, $store->getAll('article_2'));
     }
 }
 

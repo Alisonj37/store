@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace RoboJackSparrow\Database\Repositories;
 
 use RoboJackSparrow\Core\Encryption;
+use RoboJackSparrow\Core\Logger;
+use RuntimeException;
 use wpdb;
 
 /**
@@ -17,8 +19,10 @@ class SettingRepository
     private wpdb $db;
     private string $table;
 
-    public function __construct(private Encryption $encryption)
-    {
+    public function __construct(
+        private Encryption $encryption,
+        private Logger $logger
+    ) {
         global $wpdb;
 
         $this->db = $wpdb;
@@ -38,7 +42,21 @@ class SettingRepository
             return $default;
         }
 
-        return $this->decodeValue($row);
+        try {
+            return $this->decodeValue($row);
+        } catch (RuntimeException $e) {
+            // A rotated AUTH_KEY/SECURE_AUTH_KEY, a restored DB from a
+            // different site, or a lost fallback secret all make previously
+            // stored values undecryptable. One bad key must not fatal an
+            // entire admin page or REST request - degrade to $default and
+            // let the caller detect/re-prompt for reconfiguration instead.
+            $this->logger->warning('Failed to decrypt setting, returning default', [
+                'setting_key' => $key,
+                'error'       => $e->getMessage(),
+            ]);
+
+            return $default;
+        }
     }
 
     public function set(string $key, mixed $value, string $type = 'string', bool $sensitive = false, ?string $description = null): void
