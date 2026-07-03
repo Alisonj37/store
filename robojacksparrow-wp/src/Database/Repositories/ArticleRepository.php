@@ -94,38 +94,48 @@ class ArticleRepository
 
     /**
      * Other already-published articles used as internal linking candidates
-     * for a newly generated one. Prefers the same category when available,
-     * falling back to the most recent published articles overall.
+     * for a newly generated one. Only returns articles in the SAME
+     * category - no fallback to "any published article", since that
+     * previously surfaced completely unrelated internal links. No category
+     * match (or no category at all) means no internal links, not a random
+     * one.
      *
      * @return object[]
      */
     public function findRelatedPublished(int $excludeArticleId, ?string $categoryName, int $limit = 3): array
     {
-        if ($categoryName !== null && trim($categoryName) !== '') {
-            $rows = $this->db->get_results($this->db->prepare(
-                "SELECT id, source_title, wordpress_post_url FROM {$this->table}
-                 WHERE status = 'published' AND wordpress_post_url IS NOT NULL
-                 AND id != %d AND category_name = %s
-                 ORDER BY created_at DESC LIMIT %d",
-                $excludeArticleId,
-                $categoryName,
-                $limit
-            ));
-
-            if (is_array($rows) && $rows !== []) {
-                return $rows;
-            }
+        if ($categoryName === null || trim($categoryName) === '') {
+            return [];
         }
 
         $rows = $this->db->get_results($this->db->prepare(
             "SELECT id, source_title, wordpress_post_url FROM {$this->table}
-             WHERE status = 'published' AND wordpress_post_url IS NOT NULL AND id != %d
+             WHERE status = 'published' AND wordpress_post_url IS NOT NULL
+             AND id != %d AND category_name = %s
              ORDER BY created_at DESC LIMIT %d",
             $excludeArticleId,
+            $categoryName,
             $limit
         ));
 
         return is_array($rows) ? $rows : [];
+    }
+
+    /**
+     * Deletes articles stuck in 'error' status (failed generations) so the
+     * dashboard/article list doesn't accumulate dead rows the admin has no
+     * use for.
+     *
+     * @return int Number of rows deleted.
+     */
+    public function deleteErrorArticles(): int
+    {
+        // No dynamic values here (a hardcoded literal, not user input), so
+        // no prepare() is needed - wpdb::prepare() expects at least one
+        // placeholder/arg pair.
+        $result = $this->db->query("DELETE FROM {$this->table} WHERE status = 'error'");
+
+        return is_int($result) ? $result : 0;
     }
 
     /**

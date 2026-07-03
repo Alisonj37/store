@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace RoboJackSparrow\Cron\Handlers;
 
 use RoboJackSparrow\Core\Logger;
+use RoboJackSparrow\Cron\ScrapeFrequency;
 use RoboJackSparrow\Database\Repositories\ArticleRepository;
 use RoboJackSparrow\Database\Repositories\SettingRepository;
 use RoboJackSparrow\Database\Repositories\SourceRepository;
@@ -13,12 +14,15 @@ use RoboJackSparrow\Scraper\Rss\RssParser;
 use Throwable;
 
 /**
- * Coleta periodica de feeds RSS (hook rjs_rss_collect, agendado a cada 4
- * horas por CronManager). Para cada fonte RSS ativa, verifica itens novos
- * comparando source_url (RSS nem sempre garante um guid estavel entre
- * execucoes) e cria um artigo para cada item inedito, entrando na mesma
- * cadeia da fila que artigos criados manualmente ou via REST API (scrape ->
- * generate_content -> generate_image -> publish, ver JobRegistry).
+ * Coleta periodica de feeds RSS (hook rjs_rss_collect, agendado a cada 15
+ * minutos por CronManager - o tick e so o intervalo minimo possivel; cada
+ * fonte so e realmente coletada quando seu proprio scrape_frequency ja
+ * venceu, ver ScrapeFrequency::isDue()). Para cada fonte RSS ativa e no
+ * horario, verifica itens novos comparando source_url (RSS nem sempre
+ * garante um guid estavel entre execucoes) e cria um artigo para cada item
+ * inedito, entrando na mesma cadeia da fila que artigos criados
+ * manualmente ou via REST API (scrape -> generate_content ->
+ * generate_image -> publish, ver JobRegistry).
  *
  * Quando 'rjs_autopilot_enabled' esta desligado, o artigo e criado mas o
  * job 'scrape' NAO e enfileirado automaticamente - fica pendente ate um
@@ -45,6 +49,10 @@ class RssCron
     {
         foreach ($this->sources->findAll() as $source) {
             if ((int) $source->is_active !== 1 || $source->source_type !== 'rss') {
+                continue;
+            }
+
+            if (!ScrapeFrequency::isDue($source->last_scraped_at ?? null, (string) $source->scrape_frequency)) {
                 continue;
             }
 
@@ -92,7 +100,7 @@ class RssCron
             $newCount++;
         }
 
-        $this->sources->update((int) $source->id, ['last_scraped_at' => current_time('mysql')]);
+        $this->sources->update((int) $source->id, ['last_scraped_at' => current_time('mysql', true)]);
 
         $this->logger->info('RSS collection completed', [
             'source_id'    => $source->id,

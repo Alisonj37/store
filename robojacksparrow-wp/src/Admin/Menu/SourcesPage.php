@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace RoboJackSparrow\Admin\Menu;
 
 use RoboJackSparrow\Admin\View;
+use RoboJackSparrow\Cron\ScrapeFrequency;
 use RoboJackSparrow\Database\Repositories\SourceRepository;
 
 class SourcesPage
@@ -64,7 +65,8 @@ class SourcesPage
     {
         $name = sanitize_text_field((string) ($_POST['source_name'] ?? ''));
         $url = esc_url_raw((string) ($_POST['source_url'] ?? ''));
-        $frequency = sanitize_text_field((string) ($_POST['scrape_frequency'] ?? '4_hours'));
+        $frequency = (string) ($_POST['scrape_frequency'] ?? '');
+        $frequency = ScrapeFrequency::isValid($frequency) ? $frequency : ScrapeFrequency::defaultKey();
         $type = (string) ($_POST['source_type'] ?? 'rss');
         $type = array_key_exists($type, self::SOURCE_TYPES) ? $type : 'rss';
 
@@ -108,12 +110,19 @@ class SourcesPage
             $typeOptions .= sprintf('<option value="%s">%s</option>', esc_attr($value), esc_html($label));
         }
 
+        $frequencyOptions = '';
+        foreach (ScrapeFrequency::choices() as $value => $label) {
+            $selected = $value === ScrapeFrequency::defaultKey() ? ' selected' : '';
+            $frequencyOptions .= sprintf('<option value="%s"%s>%s</option>', esc_attr($value), $selected, esc_html($label));
+        }
+
         return '<form method="post">'
             . '<input type="hidden" name="rjs_action" value="add_source">'
             . '<input type="hidden" name="rjs_nonce" value="' . esc_attr($nonce) . '">'
             . '<p><label>Nome<br><input type="text" name="source_name" required></label></p>'
             . '<p><label>Tipo de fonte<br><select name="source_type">' . $typeOptions . '</select></label></p>'
             . '<p><label>URL (feed RSS ou pagina do site)<br><input type="url" name="source_url" required></label></p>'
+            . '<p><label>Frequencia de coleta<br><select name="scrape_frequency">' . $frequencyOptions . '</select></label></p>'
             . '<p><button type="submit" class="button button-primary">Adicionar Fonte</button></p>'
             . '</form>';
     }

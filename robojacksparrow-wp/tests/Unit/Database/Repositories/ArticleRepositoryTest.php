@@ -24,7 +24,7 @@ final class ArticleRepositoryTest extends TestCase
         $this->assertSame('Mesma categoria', $related[0]->source_title);
     }
 
-    public function testFindRelatedPublishedFallsBackToAnyPublishedWhenCategoryHasNoMatches(): void
+    public function testFindRelatedPublishedReturnsNothingWhenCategoryHasNoMatches(): void
     {
         $this->wpdb->articles = [
             1 => ['id' => 1, 'status' => 'published', 'wordpress_post_url' => 'https://x.test/1', 'source_title' => 'Artigo', 'category_name' => 'Esportes', 'created_at' => '2026-01-01 00:00:00'],
@@ -33,17 +33,29 @@ final class ArticleRepositoryTest extends TestCase
         $repo = new ArticleRepository();
         $related = $repo->findRelatedPublished(99, 'Tech');
 
-        $this->assertCount(1, $related, 'no Tech-category article exists, so it must fall back to any published article');
+        $this->assertSame([], $related, 'no Tech-category article exists - must not fall back to an unrelated published article');
+    }
+
+    public function testFindRelatedPublishedReturnsNothingWithoutACategory(): void
+    {
+        $this->wpdb->articles = [
+            1 => ['id' => 1, 'status' => 'published', 'wordpress_post_url' => 'https://x.test/1', 'source_title' => 'Artigo', 'category_name' => 'Tech', 'created_at' => '2026-01-01 00:00:00'],
+        ];
+
+        $repo = new ArticleRepository();
+        $related = $repo->findRelatedPublished(99, null);
+
+        $this->assertSame([], $related, 'with no category on the new article, there is nothing to reliably match against');
     }
 
     public function testFindRelatedPublishedExcludesTheArticleItself(): void
     {
         $this->wpdb->articles = [
-            1 => ['id' => 1, 'status' => 'published', 'wordpress_post_url' => 'https://x.test/1', 'source_title' => 'Artigo', 'category_name' => null, 'created_at' => '2026-01-01 00:00:00'],
+            1 => ['id' => 1, 'status' => 'published', 'wordpress_post_url' => 'https://x.test/1', 'source_title' => 'Artigo', 'category_name' => 'Tech', 'created_at' => '2026-01-01 00:00:00'],
         ];
 
         $repo = new ArticleRepository();
-        $related = $repo->findRelatedPublished(1, null);
+        $related = $repo->findRelatedPublished(1, 'Tech');
 
         $this->assertSame([], $related);
     }

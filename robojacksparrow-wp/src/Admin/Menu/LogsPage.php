@@ -11,6 +11,15 @@ class LogsPage
 {
     private const PER_PAGE = 50;
 
+    /**
+     * Must match the menu slug registered in Admin::registerMenu() for this
+     * page. Hardcoded rather than echoing back $_GET['page'] for the
+     * "Limpar filtros" link/hidden field, so a clear-filters click can never
+     * land on a broken "?page=" (empty slug) if $_GET['page'] is ever
+     * missing/malformed for any reason.
+     */
+    private const PAGE_SLUG = 'robojacksparrow-logs';
+
     private const LEVELS = ['debug', 'info', 'warning', 'error', 'critical'];
 
     private const PERIODS = [
@@ -55,7 +64,7 @@ class LogsPage
     private function renderFilterForm(?string $level, ?string $source, ?string $period, int $articleId): string
     {
         $html = '<form method="get" style="margin:1em 0;display:flex;gap:1em;align-items:flex-end;flex-wrap:wrap">';
-        $html .= '<input type="hidden" name="page" value="' . esc_attr((string) ($_GET['page'] ?? '')) . '">';
+        $html .= '<input type="hidden" name="page" value="' . esc_attr(self::PAGE_SLUG) . '">';
 
         $html .= '<p style="margin:0"><label>Tipo<br>' . $this->select('level', ['' => 'Todos'] + array_combine(self::LEVELS, self::LEVELS), $level ?? '') . '</label></p>';
         $html .= '<p style="margin:0"><label>Modulo<br>' . $this->select('module', $this->moduleChoices(), $source ?? '') . '</label></p>';
@@ -63,7 +72,7 @@ class LogsPage
         $html .= '<p style="margin:0"><label>Post ID<br><input type="number" name="post_id" min="0" value="' . ($articleId > 0 ? $articleId : '0') . '" style="width:6em"></label></p>';
 
         $html .= '<p style="margin:0"><button type="submit" class="button button-primary">Filtrar</button>'
-            . ' <a href="?page=' . esc_attr((string) ($_GET['page'] ?? '')) . '" class="button">Limpar filtros</a></p>';
+            . ' <a href="' . esc_url(admin_url('admin.php?page=' . self::PAGE_SLUG)) . '" class="button">Limpar filtros</a></p>';
 
         $html .= '</form>';
 

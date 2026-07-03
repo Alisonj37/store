@@ -76,7 +76,41 @@ class wpdb
             return $this->reclaimStaleProcessing();
         }
 
+        if (str_starts_with(trim($sql), 'DELETE FROM') && str_contains($sql, 'rjs_queue') && str_contains($sql, 'status IN')) {
+            return $this->deleteQueueRowsByStatus($this->lastPrepareArgs);
+        }
+
+        if (str_starts_with(trim($sql), 'DELETE FROM') && str_contains($sql, 'rjs_articles') && str_contains($sql, "status = 'error'")) {
+            return $this->deleteArticlesByStatus('error');
+        }
+
         return 1;
+    }
+
+    private function deleteQueueRowsByStatus(array $statuses): int
+    {
+        $deleted = 0;
+        foreach ($this->queueRows as $id => $row) {
+            if (in_array($row['status'] ?? null, $statuses, true)) {
+                unset($this->queueRows[$id]);
+                $deleted++;
+            }
+        }
+
+        return $deleted;
+    }
+
+    private function deleteArticlesByStatus(string $status): int
+    {
+        $deleted = 0;
+        foreach ($this->articles as $id => $row) {
+            if (($row['status'] ?? null) === $status) {
+                unset($this->articles[$id]);
+                $deleted++;
+            }
+        }
+
+        return $deleted;
     }
 
     /**

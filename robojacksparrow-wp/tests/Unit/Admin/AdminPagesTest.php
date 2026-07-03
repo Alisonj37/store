@@ -10,6 +10,7 @@ use RoboJackSparrow\Admin\Menu\AutopilotPage;
 use RoboJackSparrow\Admin\Menu\DashboardPage;
 use RoboJackSparrow\Admin\Menu\GenerateArticlePage;
 use RoboJackSparrow\Admin\Menu\LogsPage;
+use RoboJackSparrow\Admin\Menu\QueuePage;
 use RoboJackSparrow\Admin\Menu\SettingsPage;
 use RoboJackSparrow\Admin\Menu\SourcesPage;
 use RoboJackSparrow\Ai\HealthMonitor;
@@ -39,6 +40,39 @@ final class AdminPagesTest extends TestCase
 
         $this->assertStringContainsString('published: <strong>2</strong>', $html);
         $this->assertStringContainsString('rjs-badge-healthy', $html);
+    }
+
+    public function testDashboardClearErrorsButtonRemovesOnlyErrorArticles(): void
+    {
+        $this->wpdb->articles = [
+            1 => ['id' => 1, 'status' => 'published', 'created_at' => '2026-01-01 00:00:00'],
+            2 => ['id' => 2, 'status' => 'error', 'created_at' => '2026-01-02 00:00:00'],
+            3 => ['id' => 3, 'status' => 'error', 'created_at' => '2026-01-03 00:00:00'],
+        ];
+
+        $page = new DashboardPage(new ArticleRepository(), new QueueRepository(), new LogRepository(), new HealthMonitor());
+        $before = $page->render();
+        $this->assertStringContainsString('Limpar artigos com erro', $before);
+
+        $_POST = ['rjs_action' => 'clear_error_articles', 'rjs_nonce' => 'nonce-rjs_dashboard'];
+        $html = $page->render();
+
+        $this->assertStringContainsString('2 artigo(s) com erro removido', $html);
+        $this->assertCount(1, $this->wpdb->articles);
+        $this->assertSame('published', reset($this->wpdb->articles)['status']);
+    }
+
+    public function testDashboardClearErrorsButtonRejectsInvalidNonce(): void
+    {
+        $this->wpdb->articles = [
+            1 => ['id' => 1, 'status' => 'error', 'created_at' => '2026-01-01 00:00:00'],
+        ];
+
+        $page = new DashboardPage(new ArticleRepository(), new QueueRepository(), new LogRepository(), new HealthMonitor());
+        $_POST = ['rjs_action' => 'clear_error_articles', 'rjs_nonce' => 'wrong'];
+        $page->render();
+
+        $this->assertCount(1, $this->wpdb->articles);
     }
 
     public function testArticlesPageAppliesGetStatusFilter(): void
@@ -394,6 +428,53 @@ final class AdminPagesTest extends TestCase
         $this->assertStringNotContainsString('Falhou', $htmlByPost);
     }
 
+    public function testLogsPageClearFiltersLinkIsAlwaysValidRegardlessOfGetPage(): void
+    {
+        // No 'page' key at all in $_GET - a scenario that previously broke
+        // the clear-filters link, since it echoed back $_GET['page'] and
+        // would render "?page=" (an empty, invalid page slug) instead of
+        // the real Logs page URL.
+        $_GET = ['level' => 'error'];
+
+        $html = (new LogsPage(new LogRepository()))->render();
+
+        $this->assertStringContainsString('admin.php?page=robojacksparrow-logs', $html);
+        $this->assertStringNotContainsString('?page="', $html, 'must never render an empty page slug');
+    }
+
+    public function testQueuePageClearButtonRemovesOnlyCompletedAndFailedJobs(): void
+    {
+        $this->wpdb->queueRows = [
+            1 => ['id' => 1, 'article_id' => 1, 'job_type' => 'scrape', 'status' => 'completed', 'attempts' => 1, 'available_at' => '2026-01-01 00:00:00', 'created_at' => '2026-01-01 00:00:00'],
+            2 => ['id' => 2, 'article_id' => 2, 'job_type' => 'scrape', 'status' => 'failed', 'attempts' => 3, 'available_at' => '2026-01-01 00:00:00', 'created_at' => '2026-01-01 00:00:00'],
+            3 => ['id' => 3, 'article_id' => 3, 'job_type' => 'scrape', 'status' => 'pending', 'attempts' => 0, 'available_at' => '2026-01-01 00:00:00', 'created_at' => '2026-01-01 00:00:00'],
+        ];
+
+        $page = new QueuePage(new QueueRepository());
+        $before = $page->render();
+        $this->assertStringContainsString('Limpar fila', $before);
+
+        $_POST = ['rjs_action' => 'clear_finished_jobs', 'rjs_nonce' => 'nonce-rjs_queue'];
+        $html = $page->render();
+
+        $this->assertStringContainsString('2 job(s) removido', $html);
+        $this->assertCount(1, $this->wpdb->queueRows);
+        $this->assertSame('pending', reset($this->wpdb->queueRows)['status']);
+    }
+
+    public function testQueuePageClearButtonRejectsInvalidNonce(): void
+    {
+        $this->wpdb->queueRows = [
+            1 => ['id' => 1, 'article_id' => 1, 'job_type' => 'scrape', 'status' => 'completed', 'attempts' => 1, 'available_at' => '2026-01-01 00:00:00', 'created_at' => '2026-01-01 00:00:00'],
+        ];
+
+        $page = new QueuePage(new QueueRepository());
+        $_POST = ['rjs_action' => 'clear_finished_jobs', 'rjs_nonce' => 'wrong'];
+        $page->render();
+
+        $this->assertCount(1, $this->wpdb->queueRows);
+    }
+
     public function testGenerateArticlePageCreatesArticleAndEnqueuesScrapeJob(): void
     {
         $this->wpdb->categories['Tecnologia'] = 42;
@@ -440,6 +521,8 @@ final class AdminPagesTest extends TestCase
         $before = $page->render();
         $this->assertStringContainsString('name="assigned_llm_model"', $before);
         $this->assertStringContainsString('gpt-4o-mini', $before, 'model suggestions datalist must offer known identifiers');
+        $this->assertStringContainsString('gpt-4.1-mini', $before);
+        $this->assertStringContainsString('gpt-5.4-mini', $before, 'user-requested identifier must be offered as a suggestion');
 
         $_POST = [
             'rjs_action' => 'generate_article',

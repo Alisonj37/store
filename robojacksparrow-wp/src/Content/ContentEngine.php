@@ -104,7 +104,7 @@ class ContentEngine
 
         return new GeneratedContent(
             title: $draft->getTitle(),
-            htmlContent: $this->appendSourcesBlock($this->assembleHtml($sections, $draft->getFaqs()), $research),
+            htmlContent: $this->appendSourceBlock($this->assembleHtml($sections, $draft->getFaqs()), $source),
             seoTitle: $seoData->getTitle(),
             seoDescription: $seoData->getDescription(),
             schemaArticle: $seoData->getArticleSchema(),
@@ -151,34 +151,27 @@ class ContentEngine
     }
 
     /**
-     * External citations, linked to the verified research sources (Tavily,
-     * Fase 3). Answer engines (AEO/GEO) weigh cited, checkable sources when
-     * deciding whether to surface/quote a page, so this is skipped only
-     * when there is genuinely nothing to cite (fallback research).
+     * A single citation to the actual article this content was based on -
+     * not the Tavily research results, which are topically related but not
+     * necessarily about the same specific facts/event, and previously
+     * showed up as a list of citations with little to do with the article
+     * itself. The original source is the only link guaranteed to be
+     * genuinely "about" this article, since it's what it was written from.
      */
-    private function appendSourcesBlock(string $html, ResearchData $research): string
+    private function appendSourceBlock(string $html, ScrapedContent $source): string
     {
-        $items = '';
-
-        foreach ($research->getSources() as $source) {
-            $url = trim($source->getUrl());
-            if ($url === '') {
-                continue;
-            }
-
-            $label = trim($source->getTitle()) !== '' ? $source->getTitle() : $url;
-            $items .= sprintf(
-                "<li><a href=\"%s\" target=\"_blank\" rel=\"noopener noreferrer\">%s</a></li>\n",
-                esc_url($url),
-                esc_html($label)
-            );
-        }
-
-        if ($items === '') {
+        $url = trim($source->getUrl());
+        if ($url === '') {
             return $html;
         }
 
-        return $html . "\n\n<h2>Fontes</h2>\n<ul>\n{$items}</ul>\n";
+        $label = trim($source->getTitle()) !== '' ? $source->getTitle() : $url;
+
+        return $html . sprintf(
+            "\n\n<h2>Fonte</h2>\n<p><a href=\"%s\" target=\"_blank\" rel=\"noopener noreferrer\">%s</a></p>\n",
+            esc_url($url),
+            esc_html($label)
+        );
     }
 
     private function briefingOrFallback(string $briefing): string

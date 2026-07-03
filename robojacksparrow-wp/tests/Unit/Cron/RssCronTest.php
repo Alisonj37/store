@@ -146,6 +146,41 @@ final class RssCronTest extends TestCase
         $this->assertCount(2, $this->wpdb->articles, 'the good source must still be collected despite the broken one failing');
     }
 
+    public function testSourceNotYetDueForItsFrequencyIsSkipped(): void
+    {
+        $this->wpdb->sources[1] = [
+            'id' => 1, 'source_name' => 'Tech Blog', 'source_url' => 'https://example.com/feed',
+            'source_type' => 'rss', 'is_active' => 1, 'category_id' => null,
+            'scrape_frequency' => '4_hours', 'last_scraped_at' => gmdate('Y-m-d H:i:s', time() - 60), // 1 minute ago
+            'created_at' => '2026-01-01 00:00:00',
+        ];
+
+        HttpFixtures::set('GET', 'https://example.com/feed', $this->feedBody());
+
+        $cron = $this->makeCron();
+        $cron->collect();
+
+        $this->assertSame([], $this->wpdb->articles, 'a 4-hour source scraped 1 minute ago is not due yet');
+        $this->assertSame(0, HttpFixtures::callCount('GET', 'https://example.com/feed'));
+    }
+
+    public function testSourcePastItsFrequencyIntervalIsCollected(): void
+    {
+        $this->wpdb->sources[1] = [
+            'id' => 1, 'source_name' => 'Tech Blog', 'source_url' => 'https://example.com/feed',
+            'source_type' => 'rss', 'is_active' => 1, 'category_id' => null,
+            'scrape_frequency' => '15_minutes', 'last_scraped_at' => gmdate('Y-m-d H:i:s', time() - 3600), // 1 hour ago
+            'created_at' => '2026-01-01 00:00:00',
+        ];
+
+        HttpFixtures::set('GET', 'https://example.com/feed', $this->feedBody());
+
+        $cron = $this->makeCron();
+        $cron->collect();
+
+        $this->assertCount(2, $this->wpdb->articles, 'a 15-minute source scraped an hour ago is due');
+    }
+
     public function testRegisterHooksIntoRjsRssCollect(): void
     {
         $cron = $this->makeCron();

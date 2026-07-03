@@ -76,10 +76,12 @@ final class ContentEngineTest extends TestCase
         // Proves the Tavily briefing is actually injected into the prompt.
         $this->assertStringContainsString('Resposta verificada ABC sobre o lancamento do robo.', $provider->prompts[0]);
 
-        // External citations from the research sources (AEO/GEO: answer
-        // engines weigh cited, checkable sources).
-        $this->assertStringContainsString('<h2>Fontes</h2>', $result->getHtmlContent());
-        $this->assertStringContainsString('<a href="https://example.com/fonte" target="_blank" rel="noopener noreferrer">Fonte Exemplo Verificada</a>', $result->getHtmlContent());
+        // The citation links to the actual original source, not the
+        // Tavily research results (which are only topically related and
+        // previously showed up as a pile of unrelated "Fontes").
+        $this->assertStringContainsString('<h2>Fonte</h2>', $result->getHtmlContent());
+        $this->assertStringContainsString('<a href="https://example.com/original-article" target="_blank" rel="noopener noreferrer">Noticia Original Sobre Robos</a>', $result->getHtmlContent());
+        $this->assertStringNotContainsString('Fonte Exemplo Verificada', $result->getHtmlContent(), 'Tavily research results must not be rendered as article citations');
     }
 
     public function testModelOverrideReachesTheLlmRequest(): void
@@ -164,17 +166,17 @@ final class ContentEngineTest extends TestCase
         $this->assertStringContainsString('nunca copie', mb_strtolower($provider->prompts[0]));
     }
 
-    public function testNoSourcesBlockIsAddedWhenResearchHasNoSources(): void
+    public function testNoSourceBlockIsAddedWhenTheOriginalSourceHasNoUrl(): void
     {
         $provider = new ScriptedProvider();
         $engine = $this->makeEngine($provider);
 
-        $source = new ScrapedContent(url: 'x', title: 'X', text: 'text', html: null);
+        $source = new ScrapedContent(url: '', title: 'X', text: 'text', html: null);
         $research = new ResearchData(facts: [], sources: [], answer: null, entities: [], fromFallback: true);
 
         $result = $engine->generate(1, $source, $research);
 
-        $this->assertStringNotContainsString('<h2>Fontes</h2>', $result->getHtmlContent());
+        $this->assertStringNotContainsString('<h2>Fonte</h2>', $result->getHtmlContent());
     }
 
     public function testFallbackResearchDataStillProducesContentWithPlaceholderBriefing(): void

@@ -63,6 +63,21 @@ class QueueRepository
     }
 
     /**
+     * Deletes finished jobs (completed or failed) so the queue table
+     * doesn't grow unbounded - pending/processing jobs are left untouched.
+     *
+     * @return int Number of rows deleted.
+     */
+    public function deleteCompletedAndFailed(): int
+    {
+        $result = $this->db->query(
+            $this->db->prepare("DELETE FROM {$this->table} WHERE status IN (%s, %s)", 'completed', 'failed')
+        );
+
+        return is_int($result) ? $result : 0;
+    }
+
+    /**
      * @return array<string, int>
      */
     public function countByStatus(): array

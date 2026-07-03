@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace RoboJackSparrow\Cron\Handlers;
 
 use RoboJackSparrow\Core\Logger;
+use RoboJackSparrow\Cron\ScrapeFrequency;
 use RoboJackSparrow\Database\Repositories\ArticleRepository;
 use RoboJackSparrow\Database\Repositories\SettingRepository;
 use RoboJackSparrow\Database\Repositories\SourceRepository;
@@ -50,6 +51,10 @@ class ScraperCron
                 continue;
             }
 
+            if (!ScrapeFrequency::isDue($source->last_scraped_at ?? null, (string) $source->scrape_frequency)) {
+                continue;
+            }
+
             try {
                 $this->collectFromSource($source);
             } catch (Throwable $e) {
@@ -92,7 +97,7 @@ class ScraperCron
             $newCount++;
         }
 
-        $this->sources->update((int) $source->id, ['last_scraped_at' => current_time('mysql')]);
+        $this->sources->update((int) $source->id, ['last_scraped_at' => current_time('mysql', true)]);
 
         $this->logger->info('Site scraper collection completed', [
             'source_id'    => $source->id,

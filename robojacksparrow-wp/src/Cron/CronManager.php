@@ -13,10 +13,16 @@ class CronManager
         'rjs_every_4_hours'    => ['interval' => 14400, 'label' => 'A cada 4 horas'],
     ];
 
-    /** Hook name => recurrence key (custom interval above, or a WP-native one). */
+    /**
+     * Hook name => recurrence key (custom interval above, or a WP-native
+     * one). rjs_rss_collect/rjs_scraper_collect both tick every 15 minutes
+     * - the fastest per-source frequency offered in the Fontes page - and
+     * each source's own scrape_frequency (see ScrapeFrequency::isDue())
+     * decides whether THAT source is actually due on a given tick.
+     */
     private const EVENTS = [
         'rjs_worker_process'   => 'rjs_every_minute',
-        'rjs_rss_collect'      => 'rjs_every_4_hours',
+        'rjs_rss_collect'      => 'rjs_every_15_minutes',
         'rjs_scraper_collect'  => 'rjs_every_15_minutes',
         'rjs_llm_health_check' => 'rjs_every_5_minutes',
         'rjs_daily_cleanup'    => 'daily',

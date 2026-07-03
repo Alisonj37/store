@@ -65,7 +65,11 @@ class SettingsPage
         'rjs_openai_model'    => [
             'label'       => 'Modelo OpenAI',
             'default'     => '',
-            'suggestions' => ['gpt-4o', 'gpt-4o-mini', 'gpt-4.1', 'gpt-4.1-mini', 'gpt-4.1-nano', 'o3-mini', 'o1'],
+            // gpt-5.4-mini: identificador informado pelo usuario, posterior
+            // ao meu treinamento - nao consigo confirmar a grafia exata da
+            // API da OpenAI para esse modelo. Confira o identificador exato
+            // em platform.openai.com antes de salvar.
+            'suggestions' => ['gpt-4o', 'gpt-4o-mini', 'gpt-4.1', 'gpt-4.1-mini', 'gpt-4.1-nano', 'gpt-5.4-mini', 'o3-mini', 'o1'],
         ],
         'rjs_anthropic_model' => [
             'label'       => 'Modelo Anthropic',
@@ -113,7 +117,9 @@ class SettingsPage
         $html .= $this->renderCheckbox('rjs_watermark_enabled', self::CHECKBOX_OPTIONS['rjs_watermark_enabled']);
 
         $html .= '<h2>Modelos por Provedor</h2>';
-        $html .= '<p class="description">Escolha uma sugestao ou digite o identificador do modelo. Deixe em branco para usar o padrao de cada provedor.</p>';
+        $html .= '<p class="description">Este campo aceita QUALQUER identificador de modelo, mesmo que nao esteja na lista de '
+            . 'sugestoes - a lista e so um atalho, digite livremente o que a API do provedor esperar. Deixe em branco para '
+            . 'usar o padrao de cada provedor.</p>';
         foreach (self::MODEL_OPTIONS as $key => $meta) {
             $html .= $this->renderModelField($key, $meta);
         }

@@ -126,6 +126,24 @@ final class ScraperCronTest extends TestCase
         $this->assertSame(0, HttpFixtures::callCount('GET', 'https://example.com/feed'));
     }
 
+    public function testSourceNotYetDueForItsFrequencyIsSkipped(): void
+    {
+        $this->wpdb->sources[1] = [
+            'id' => 1, 'source_name' => 'Blog X', 'source_url' => 'https://example.com/blog',
+            'source_type' => 'scraper', 'is_active' => 1, 'category_id' => null,
+            'scrape_frequency' => 'daily', 'last_scraped_at' => gmdate('Y-m-d H:i:s', time() - 3600),
+            'created_at' => '2026-01-01 00:00:00',
+        ];
+
+        HttpFixtures::set('GET', 'https://example.com/blog', ['response' => ['code' => 200], 'body' => $this->listingHtml()]);
+
+        $cron = $this->makeCron();
+        $cron->collect();
+
+        $this->assertSame([], $this->wpdb->articles, 'a daily source scraped an hour ago is not due yet');
+        $this->assertSame(0, HttpFixtures::callCount('GET', 'https://example.com/blog'));
+    }
+
     public function testOneFailingSourceDoesNotStopCollectionOfOthers(): void
     {
         $this->wpdb->sources = [

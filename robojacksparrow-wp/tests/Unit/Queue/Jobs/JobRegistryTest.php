@@ -167,14 +167,14 @@ final class JobRegistryTest extends TestCase
     {
         $this->wpdb->articles[1] = [
             'id' => 1, 'source_type' => 'scraper', 'source_url' => 'https://example.com/original-article',
-            'status' => 'pending', 'priority' => 5, 'created_at' => '2026-01-01 00:00:00',
+            'status' => 'pending', 'priority' => 5, 'category_name' => 'Tech', 'created_at' => '2026-01-01 00:00:00',
         ];
-        // An unrelated article already published on the site - a valid
-        // internal-linking candidate since findRelatedPublished() falls
-        // back to any published article when the new one has no category.
+        // Another already-published article in the SAME category - a
+        // genuinely relevant internal-linking candidate. findRelatedPublished()
+        // only matches by category now, no fallback to unrelated articles.
         $this->wpdb->articles[900] = [
             'id' => 900, 'status' => 'published', 'wordpress_post_url' => 'https://example.test/?p=900',
-            'source_title' => 'Artigo Relacionado Publicado', 'created_at' => '2025-12-01 00:00:00',
+            'source_title' => 'Artigo Relacionado Publicado', 'category_name' => 'Tech', 'created_at' => '2025-12-01 00:00:00',
         ];
 
         $articles = new ArticleRepository();
@@ -203,6 +203,47 @@ final class JobRegistryTest extends TestCase
         $article = $articles->find(1);
         $this->assertStringContainsString('<h2>Leia tambem</h2>', $article->generated_content);
         $this->assertStringContainsString('<a href="https://example.test/?p=900">Artigo Relacionado Publicado</a>', $article->generated_content);
+    }
+
+    public function testHandleGenerateContentAddsNoInternalLinkWhenNoPublishedArticleSharesTheCategory(): void
+    {
+        $this->wpdb->articles[1] = [
+            'id' => 1, 'source_type' => 'scraper', 'source_url' => 'https://example.com/original-article',
+            'status' => 'pending', 'priority' => 5, 'category_name' => 'Tech', 'created_at' => '2026-01-01 00:00:00',
+        ];
+        // Published, but in an unrelated category - must NOT be surfaced as
+        // an internal link (the exact bug being fixed here).
+        $this->wpdb->articles[900] = [
+            'id' => 900, 'status' => 'published', 'wordpress_post_url' => 'https://example.test/?p=900',
+            'source_title' => 'Artigo Sem Relacao Nenhuma', 'category_name' => 'Esportes', 'created_at' => '2025-12-01 00:00:00',
+        ];
+
+        $articles = new ArticleRepository();
+        $logger = new Logger();
+        $settings = new SettingRepository(new Encryption(), $logger);
+        $llmRouter = new LLMRouter(['test' => new FakeLlmProvider()], new HealthMonitor(), $logger);
+        $content = $this->makeContentEngine($llmRouter, $settings, $logger);
+
+        $registry = new JobRegistry(
+            $articles,
+            new QueueManager($logger),
+            new ScraperEngine([], $logger),
+            new ResearchEngine(null, $logger),
+            $content,
+            new ImageEngine([], $logger),
+            new PostPublisher(new TaxonomyManager(), new MediaUploader(), new SeoIntegrator(), $logger),
+            $logger
+        );
+
+        $registry->handleGenerateContent(null, \RoboJackSparrow\Queue\Job::fromRow((object) [
+            'id' => 1, 'article_id' => 1, 'job_type' => 'generate_content',
+            'job_payload' => json_encode(['scraped_url' => 'https://example.com/original-article', 'scraped_title' => 'Original', 'scraped_text' => 'Texto original.']),
+            'attempts' => 0, 'max_attempts' => 3, 'status' => 'processing',
+        ]));
+
+        $article = $articles->find(1);
+        $this->assertStringNotContainsString('<h2>Leia tambem</h2>', $article->generated_content);
+        $this->assertStringNotContainsString('Artigo Sem Relacao Nenhuma', $article->generated_content);
     }
 
     private function makeRegistryForPublishOnly(ArticleRepository $articles): JobRegistry

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace RoboJackSparrow\Admin\Menu;
 
+use RoboJackSparrow\Cron\ScrapeFrequency;
 use RoboJackSparrow\Database\Repositories\SettingRepository;
 use RoboJackSparrow\Database\Repositories\SourceRepository;
 
@@ -97,15 +98,20 @@ class AutopilotPage
         }
 
         $html = '<table class="widefat striped"><thead><tr>'
-            . '<th>Nome</th><th>Tipo</th><th>Ativo</th><th>Ultima coleta</th>'
+            . '<th>Nome</th><th>Tipo</th><th>Frequencia</th><th>Ativo</th><th>Ultima coleta</th>'
             . '</tr></thead><tbody>';
+
+        $frequencyLabels = ScrapeFrequency::choices();
 
         foreach ($sources as $source) {
             $type = self::SOURCE_TYPE_LABELS[$source->source_type] ?? (string) $source->source_type;
+            $sourceFrequency = (string) ($source->scrape_frequency ?? '');
+            $frequency = $frequencyLabels[$sourceFrequency] ?? $sourceFrequency;
 
             $html .= '<tr>';
             $html .= '<td>' . esc_html((string) $source->source_name) . '</td>';
             $html .= '<td>' . esc_html($type) . '</td>';
+            $html .= '<td>' . esc_html($frequency) . '</td>';
             $html .= '<td>' . ((int) $source->is_active === 1 ? 'Sim' : 'Nao') . '</td>';
             $html .= '<td>' . esc_html((string) ($source->last_scraped_at ?? 'nunca')) . '</td>';
             $html .= '</tr>';

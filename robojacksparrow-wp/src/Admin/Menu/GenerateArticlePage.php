@@ -49,7 +49,7 @@ class GenerateArticlePage
      * JS nesta pagina para filtrar a lista por provedor escolhido.
      */
     private const MODEL_SUGGESTIONS = [
-        'gpt-4o', 'gpt-4o-mini', 'gpt-4.1', 'gpt-4.1-mini', 'gpt-4.1-nano', 'o3-mini', 'o1',
+        'gpt-4o', 'gpt-4o-mini', 'gpt-4.1', 'gpt-4.1-mini', 'gpt-4.1-nano', 'gpt-5.4-mini', 'o3-mini', 'o1',
         'claude-3-5-sonnet-20241022', 'claude-3-5-haiku-20241022', 'claude-3-opus-20240229', 'claude-3-haiku-20240307',
         'llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'mixtral-8x7b-32768',
         'gemini-1.5-pro', 'gemini-1.5-flash', 'gemini-2.0-flash',
@@ -129,7 +129,7 @@ class GenerateArticlePage
             $options .= sprintf('<option value="%s">', esc_attr($suggestion));
         }
 
-        return '<p><label>Modelo (opcional, deixe em branco para usar o padrao configurado)<br>'
+        return '<p><label>Modelo (opcional - digite qualquer identificador, a lista abaixo e so sugestao; deixe em branco para usar o padrao configurado)<br>'
             . '<input type="text" name="assigned_llm_model" list="rjs_generate_model_suggestions" placeholder="ex: gpt-4o-mini" style="width:300px">'
             . '<datalist id="rjs_generate_model_suggestions">' . $options . '</datalist>'
             . '</label></p>';

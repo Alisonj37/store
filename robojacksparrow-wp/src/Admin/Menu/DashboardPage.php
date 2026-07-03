@@ -13,6 +13,7 @@ use RoboJackSparrow\Database\Repositories\QueueRepository;
 class DashboardPage
 {
     private const LLM_PROVIDERS = ['openai', 'anthropic', 'groq', 'gemini', 'deepseek'];
+    private const NONCE_ACTION = 'rjs_dashboard';
 
     public function __construct(
         private ArticleRepository $articles,
@@ -24,10 +25,17 @@ class DashboardPage
 
     public function render(): string
     {
+        $notice = $this->handleSubmission();
+
         $html = '<div class="wrap"><h1>RoboJackSparrow WP</h1>';
+
+        if ($notice !== null) {
+            $html .= $notice;
+        }
 
         $html .= '<h2>Artigos</h2>';
         $html .= $this->renderCounts($this->articles->countByStatus());
+        $html .= $this->renderClearErrorsForm();
 
         $html .= '<h2>Fila</h2>';
         $html .= $this->renderCounts($this->queue->countByStatus());
@@ -46,6 +54,32 @@ class DashboardPage
         $html .= '</div>';
 
         return $html;
+    }
+
+    private function renderClearErrorsForm(): string
+    {
+        $nonce = wp_create_nonce(self::NONCE_ACTION);
+
+        return '<form method="post" style="margin:0.5em 0 1em">'
+            . '<input type="hidden" name="rjs_action" value="clear_error_articles">'
+            . '<input type="hidden" name="rjs_nonce" value="' . esc_attr($nonce) . '">'
+            . '<button type="submit" class="button" onclick="return confirm(\'Remover todos os artigos com erro?\')">Limpar artigos com erro</button>'
+            . '</form>';
+    }
+
+    private function handleSubmission(): ?string
+    {
+        if (($_POST['rjs_action'] ?? '') !== 'clear_error_articles') {
+            return null;
+        }
+
+        if (!current_user_can('manage_options') || !wp_verify_nonce((string) ($_POST['rjs_nonce'] ?? ''), self::NONCE_ACTION)) {
+            return '<div class="notice notice-error"><p>Nao foi possivel validar a solicitacao.</p></div>';
+        }
+
+        $deleted = $this->articles->deleteErrorArticles();
+
+        return '<div class="notice notice-success"><p>' . $deleted . ' artigo(s) com erro removido(s).</p></div>';
     }
 
     /**
