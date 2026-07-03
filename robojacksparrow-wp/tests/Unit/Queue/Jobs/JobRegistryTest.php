@@ -243,6 +243,32 @@ final class JobRegistryTest extends TestCase
         );
     }
 
+    public function testHandleGenerateImageFallsBackToPublishingWithoutFeaturedImageWhenAllProvidersFail(): void
+    {
+        $this->wpdb->articles[1] = [
+            'id' => 1, 'source_title' => 'Titulo', 'generated_content' => '<p>Conteudo</p>',
+            'status' => 'queued_image', 'created_at' => '2026-01-01 00:00:00',
+        ];
+        $articles = new ArticleRepository();
+        // makeRegistryForPublishOnly() wires ImageEngine with zero providers,
+        // so generate() always throws - reproduces "no image API keys
+        // configured yet" without needing real HTTP fixtures.
+        $registry = $this->makeRegistryForPublishOnly($articles);
+
+        $handled = $registry->handleGenerateImage(null, \RoboJackSparrow\Queue\Job::fromRow((object) [
+            'id' => 1, 'article_id' => 1, 'job_type' => 'generate_image',
+            'job_payload' => json_encode(['image_prompt' => 'a robot writing an article']),
+            'attempts' => 0, 'max_attempts' => 3, 'status' => 'processing',
+        ]));
+
+        $this->assertTrue($handled, 'must report success instead of failing the whole article over an image provider outage');
+        $this->assertSame('queued_publish', $articles->find(1)->status);
+        $this->assertCount(1, $this->wpdb->queueRows);
+        $publishJob = reset($this->wpdb->queueRows);
+        $this->assertSame('publish', $publishJob['job_type']);
+        $this->assertSame([], json_decode((string) $publishJob['job_payload'], true), 'no image data must be carried into the publish job');
+    }
+
     public function testHandlePublishUsesDraftStatusFromArticleOverride(): void
     {
         $this->wpdb->articles[1] = [

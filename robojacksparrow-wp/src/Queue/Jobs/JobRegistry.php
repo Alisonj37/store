@@ -20,6 +20,7 @@ use RoboJackSparrow\Queue\QueueManager;
 use RoboJackSparrow\Research\ResearchEngine;
 use RoboJackSparrow\Scraper\Dto\ScrapedContent;
 use RoboJackSparrow\Scraper\ScraperEngine;
+use Throwable;
 
 /**
  * Conecta os tipos de job da fila (scrape -> generate_content ->
@@ -147,10 +148,26 @@ class JobRegistry
             return true;
         }
 
-        $result = $this->image->generate(
-            new ImageRequest($prompt),
-            $this->articleOverride($article->assigned_image_source ?? null)
-        );
+        try {
+            $result = $this->image->generate(
+                new ImageRequest($prompt),
+                $this->articleOverride($article->assigned_image_source ?? null)
+            );
+        } catch (Throwable $e) {
+            // Every image provider failed (e.g. no API keys configured yet).
+            // An article without a featured image is still a published
+            // article; failing the whole job here would silently block
+            // publishing entirely until every image provider is fixed.
+            $this->logger->warning('All image providers failed, publishing without a featured image', [
+                'article_id' => $job->getArticleId(),
+                'error'      => $e->getMessage(),
+            ]);
+
+            $this->articles->update($job->getArticleId(), ['status' => 'queued_publish']);
+            $this->queue->enqueue($job->getArticleId(), 'publish', []);
+
+            return true;
+        }
 
         $this->articles->update($job->getArticleId(), ['status' => 'queued_publish']);
         $this->queue->enqueue($job->getArticleId(), 'publish', [
