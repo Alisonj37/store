@@ -16,8 +16,6 @@ use RoboJackSparrow\Admin\Menu\SettingsPage;
 use RoboJackSparrow\Admin\Menu\SourcesPage;
 use RoboJackSparrow\Ai\HealthMonitor;
 use RoboJackSparrow\Ai\LLMRouter;
-use RoboJackSparrow\Ai\Memory\MemoryBuffer;
-use RoboJackSparrow\Ai\Memory\MemoryStore;
 use RoboJackSparrow\Ai\Providers\AnthropicProvider;
 use RoboJackSparrow\Ai\Providers\DeepSeekProvider;
 use RoboJackSparrow\Ai\Providers\GeminiProvider;
@@ -30,8 +28,7 @@ use RoboJackSparrow\Api\Controllers\SettingsController;
 use RoboJackSparrow\Api\Controllers\SourceController;
 use RoboJackSparrow\Api\RestApi;
 use RoboJackSparrow\Content\ContentEngine;
-use RoboJackSparrow\Content\Faq\FaqExtractor;
-use RoboJackSparrow\Content\Outline\OutlineGenerator;
+use RoboJackSparrow\Content\Draft\ArticleDraftParser;
 use RoboJackSparrow\Content\Prompts\PromptLibrary;
 use RoboJackSparrow\Content\Seo\SeoGenerator;
 use RoboJackSparrow\Cron\CronManager;
@@ -195,10 +192,8 @@ final class Plugin
         $prompts = new PromptLibrary();
         $contentEngine = new ContentEngine(
             $llmRouter,
-            new MemoryBuffer(new MemoryStore()),
             new SeoGenerator(),
-            new FaqExtractor($llmRouter, $prompts),
-            new OutlineGenerator(),
+            new ArticleDraftParser(),
             $prompts,
             $settings,
             $this->logger

@@ -12,11 +12,8 @@ use RoboJackSparrow\Ai\Dto\LLMResponse;
 use RoboJackSparrow\Ai\HealthMonitor;
 use RoboJackSparrow\Ai\LLMException;
 use RoboJackSparrow\Ai\LLMRouter;
-use RoboJackSparrow\Ai\Memory\MemoryBuffer;
-use RoboJackSparrow\Ai\Memory\MemoryStore;
 use RoboJackSparrow\Content\ContentEngine;
-use RoboJackSparrow\Content\Faq\FaqExtractor;
-use RoboJackSparrow\Content\Outline\OutlineGenerator;
+use RoboJackSparrow\Content\Draft\ArticleDraftParser;
 use RoboJackSparrow\Content\Prompts\PromptLibrary;
 use RoboJackSparrow\Content\Seo\SeoGenerator;
 use RoboJackSparrow\Core\Encryption;
@@ -56,8 +53,7 @@ final class GenerateArticlePageEndToEndTest extends TestCase
         $research = new ResearchEngine(new TavilyDriver(''), $logger);
         $settings = new SettingRepository(new Encryption(), $logger);
         $llmRouter = new LLMRouter(['test' => new FakeLlmProvider()], new HealthMonitor(), $logger);
-        $prompts = new PromptLibrary();
-        $content = new ContentEngine($llmRouter, new MemoryBuffer(new MemoryStore()), new SeoGenerator(), new FaqExtractor($llmRouter, $prompts), new OutlineGenerator(), $prompts, $settings, $logger);
+        $content = new ContentEngine($llmRouter, new SeoGenerator(), new ArticleDraftParser(), new PromptLibrary(), $settings, $logger);
         $image = new ImageEngine([new FakeImageProvider()], $logger);
         $publisher = new PostPublisher(new TaxonomyManager(), new MediaUploader(), new SeoIntegrator(), $logger);
         $scraper = new ScraperEngine([new FakeScraper()], $logger);
@@ -174,22 +170,15 @@ final class FakeLlmProvider implements LLMProviderInterface
     {
         $prompt = $request->getPrompt();
 
-        if (str_contains($prompt, 'Crie a estrutura de um artigo original')) {
+        if (str_contains($prompt, 'Escreva um artigo ORIGINAL')) {
             return new LLMResponse(json_encode([
                 'title'            => 'Titulo Gerado',
                 'meta_description' => 'Descricao gerada.',
-                'sections'         => [['title' => 'Introducao', 'level' => 2]],
+                'sections'         => [['title' => 'Introducao', 'level' => 2, 'html' => '<p>Conteudo gerado para a secao.</p>']],
+                'faqs'             => [],
                 'focus_keywords'   => ['robo'],
                 'image_prompt'     => 'a robot',
             ]), 100, 80, 20, 'test-model', 'stop', []);
-        }
-
-        if (str_contains($prompt, 'Voce esta escrevendo a secao')) {
-            return new LLMResponse('<p>Conteudo gerado para a secao.</p>', 50, 30, 20, 'test-model', 'stop', []);
-        }
-
-        if (str_contains($prompt, 'extraia de 3 a 6 perguntas')) {
-            return new LLMResponse(json_encode([]), 10, 5, 5, 'test-model', 'stop', []);
         }
 
         throw new LLMException('Unexpected prompt: ' . substr($prompt, 0, 60));

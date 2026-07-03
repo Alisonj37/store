@@ -6,34 +6,37 @@ namespace RoboJackSparrow\Content;
 
 use RoboJackSparrow\Ai\Dto\LLMRequest;
 use RoboJackSparrow\Ai\LLMRouter;
-use RoboJackSparrow\Ai\Memory\MemoryBuffer;
+use RoboJackSparrow\Content\Dto\Faq;
 use RoboJackSparrow\Content\Dto\GeneratedContent;
-use RoboJackSparrow\Content\Dto\Outline;
-use RoboJackSparrow\Content\Faq\FaqExtractor;
-use RoboJackSparrow\Content\Outline\OutlineGenerator;
+use RoboJackSparrow\Content\Draft\ArticleDraftParser;
 use RoboJackSparrow\Content\Prompts\PromptLibrary;
 use RoboJackSparrow\Content\Seo\SeoGenerator;
+use RoboJackSparrow\Content\Tone\TonePresets;
 use RoboJackSparrow\Core\Logger;
 use RoboJackSparrow\Database\Repositories\SettingRepository;
 use RoboJackSparrow\Research\Dto\ResearchData;
 use RoboJackSparrow\Scraper\Dto\ScrapedContent;
 
 /**
- * Pipeline: outline -> sections (com memoria) -> FAQ -> SEO.
+ * Gera o artigo completo (titulo, secoes com HTML, FAQ, palavras-chave,
+ * prompt de imagem) em UMA UNICA chamada de LLM, em vez de uma chamada de
+ * outline + uma por secao + uma de FAQ: um prompt bem estruturado (ver
+ * PromptLibrary::article_generation) e um modelo moderno dao conta de um
+ * artigo inteiro de ~1500-2500 palavras em uma resposta so, o que reduz
+ * latencia e custo de tokens por artigo sem perder qualidade percebida.
  *
- * O briefing factual do Research Engine (Tavily, Fase 3) e injetado como
- * contexto em CADA prompt de geracao (outline e secoes), para ancorar o
- * conteudo gerado em fatos verificados em vez de depender so da fonte
- * raspada/RSS.
+ * O briefing factual do Research Engine (Tavily) e injetado no mesmo prompt
+ * para ancorar o conteudo gerado em fatos verificados, e a instrucao de
+ * originalidade e explicita: a fonte raspada e so referencia factual, o
+ * texto final tem que ser uma redacao propria, nunca uma copia/parafrase
+ * proxima da fonte.
  */
 class ContentEngine
 {
     public function __construct(
         private LLMRouter $llm,
-        private MemoryBuffer $memory,
         private SeoGenerator $seo,
-        private FaqExtractor $faq,
-        private OutlineGenerator $outlineGenerator,
+        private ArticleDraftParser $draftParser,
         private PromptLibrary $prompts,
         private SettingRepository $settings,
         private Logger $logger
@@ -48,130 +51,74 @@ class ContentEngine
      * @param ?string $modelOverride Article-level model override (e.g. the
      *     'assigned_llm_model' column). Wins over the provider's own
      *     admin-configured default model (rjs_openai_model, etc.).
+     * @param ?string $toneOverride Article-level tone preset key (e.g. the
+     *     'assigned_tone' column). Wins over the global 'rjs_content_tone'
+     *     setting. See TonePresets for the available keys.
      */
-    public function generate(int $articleId, ScrapedContent $source, ResearchData $research, ?string $preferredProvider = null, ?string $modelOverride = null): GeneratedContent
-    {
-        $contextKey = "article_{$articleId}";
-        $this->memory->clear($contextKey);
-
+    public function generate(
+        int $articleId,
+        ScrapedContent $source,
+        ResearchData $research,
+        ?string $preferredProvider = null,
+        ?string $modelOverride = null,
+        ?string $toneOverride = null
+    ): GeneratedContent {
         $briefing = $research->toBriefing();
         $provider = $this->resolvePreferredProvider($preferredProvider);
         $model = $modelOverride !== null && trim($modelOverride) !== '' ? $modelOverride : null;
+        $wordCount = (int) $this->settings->get('rjs_target_word_count', 1500);
 
-        // === ETAPA 1: OUTLINE ===
-        $this->logger->info('Starting outline generation', ['article_id' => $articleId]);
+        $this->logger->info('Starting single-call article generation', ['article_id' => $articleId]);
 
-        $outlineResponse = $this->llm->route(new LLMRequest(
-            prompt: $this->prompts->get('outline_generation', [
+        $response = $this->llm->route(new LLMRequest(
+            prompt: $this->prompts->get('article_generation', [
                 'title'             => $source->getTitle(),
                 'content'           => mb_substr($source->getText(), 0, 8000),
                 'research_briefing' => $this->briefingOrFallback($briefing),
                 'language'          => $this->settings->get('rjs_content_language', 'pt_BR'),
-                'tone'              => $this->settings->get('rjs_content_tone', 'professional'),
-                'word_count'        => $this->settings->get('rjs_target_word_count', 1500),
+                'tone_instructions' => $this->resolveToneInstructions($toneOverride),
+                'word_count'        => $wordCount,
             ]),
             model: $model,
             isJsonMode: true,
-            maxTokens: 2048,
+            maxTokens: $this->resolveMaxTokens($wordCount),
             temperature: 0.7,
             preferredProvider: $provider
         ));
 
-        $outline = $this->outlineGenerator->parse($outlineResponse->getContent());
-        $totalTokens = $outlineResponse->getTokensUsed();
-
-        // === ETAPA 2: CONTEUDO POR SECAO (com memoria) ===
-        $this->logger->info('Starting content generation', [
-            'article_id' => $articleId,
-            'sections'   => count($outline->getSections()),
-        ]);
+        $draft = $this->draftParser->parse($response->getContent());
+        $totalTokens = $response->getTokensUsed();
 
         $sections = [];
-        foreach ($outline->getSections() as $index => $section) {
-            $generated = $this->generateSection($contextKey, $source, $outline, $section, $index, $briefing, $provider, $model);
-            $sections[] = $generated;
-            $totalTokens += $generated['tokens'];
+        foreach ($draft->getSections() as $section) {
+            $sections[] = [
+                'title'      => $section['title'],
+                'level'      => $section['level'],
+                'html'       => $this->formatSectionHtml($section, $section['html']),
+                'word_count' => str_word_count(strip_tags($section['html'])),
+            ];
         }
 
         $fullContent = implode("\n\n", array_column($sections, 'html'));
-
-        // === ETAPA 3: FAQ ===
-        $this->logger->info('Starting FAQ extraction', ['article_id' => $articleId]);
-        $faqs = $this->faq->extract($fullContent, $provider, $model);
-        $totalTokens += $this->faq->getLastTokensUsed();
-
-        // === ETAPA 4: SEO ===
-        $this->logger->info('Generating SEO data', ['article_id' => $articleId]);
-        $seoData = $this->seo->generate($outline, $fullContent);
+        $seoData = $this->seo->generate($draft->getTitle(), $draft->getMetaDescription(), $fullContent);
 
         return new GeneratedContent(
-            title: $outline->getTitle(),
-            htmlContent: $this->appendSourcesBlock($this->assembleHtml($sections, $faqs), $research),
+            title: $draft->getTitle(),
+            htmlContent: $this->appendSourcesBlock($this->assembleHtml($sections, $draft->getFaqs()), $research),
             seoTitle: $seoData->getTitle(),
             seoDescription: $seoData->getDescription(),
             schemaArticle: $seoData->getArticleSchema(),
-            schemaFaq: $this->faq->toSchema($faqs),
-            focusKeywords: $outline->getFocusKeywords(),
-            faqs: $faqs,
+            schemaFaq: Faq::schemaFor($draft->getFaqs()),
+            focusKeywords: $draft->getFocusKeywords(),
+            faqs: $draft->getFaqs(),
             sections: $sections,
-            imagePrompt: $outline->getImagePrompt(),
+            imagePrompt: $draft->getImagePrompt(),
             tokensUsed: $totalTokens
         );
     }
 
     /**
-     * @param array{title: string, level: int} $section
-     * @return array{title: string, level: int, html: string, word_count: int, tokens: int}
-     */
-    private function generateSection(
-        string $contextKey,
-        ScrapedContent $source,
-        Outline $outline,
-        array $section,
-        int $index,
-        string $briefing,
-        ?string $preferredProvider = null,
-        ?string $modelOverride = null
-    ): array {
-        $memory = $this->memory->getContext($contextKey);
-
-        $response = $this->llm->route(new LLMRequest(
-            prompt: $this->prompts->get('section_generation', [
-                'section_title'     => $section['title'],
-                'section_level'     => $section['level'],
-                'section_index'     => $index + 1,
-                'total_sections'    => count($outline->getSections()),
-                'outline_context'   => $outline->toString(),
-                'source_content'    => $source->getText(),
-                'research_briefing' => $this->briefingOrFallback($briefing),
-            ]),
-            model: $modelOverride,
-            contextMemory: $memory,
-            maxTokens: 2048,
-            temperature: 0.7,
-            preferredProvider: $preferredProvider
-        ));
-
-        // Store as a (user, assistant) pair, not just the assistant reply:
-        // some providers (Anthropic's Messages API) require context messages
-        // to strictly alternate user/assistant starting with user, and would
-        // reject the request once a 2nd section makes contextMemory contain
-        // two assistant entries in a row. Kept short (not the full prompt)
-        // so memory stays compact across many sections.
-        $this->memory->push($contextKey, 'user', sprintf('Escreva a secao: %s', $section['title']), 0);
-        $this->memory->push($contextKey, 'assistant', $response->getContent(), $response->getTokensUsed());
-
-        return [
-            'title'      => $section['title'],
-            'level'      => $section['level'],
-            'html'       => $this->formatSectionHtml($section, $response->getContent()),
-            'word_count' => str_word_count(strip_tags($response->getContent())),
-            'tokens'     => $response->getTokensUsed(),
-        ];
-    }
-
-    /**
-     * @param array{title: string, level: int} $section
+     * @param array{title: string, level: int, html: string} $section
      */
     private function formatSectionHtml(array $section, string $body): string
     {
@@ -182,8 +129,8 @@ class ContentEngine
     }
 
     /**
-     * @param array<int, array{title: string, level: int, html: string, word_count: int, tokens: int}> $sections
-     * @param \RoboJackSparrow\Content\Dto\Faq[] $faqs
+     * @param array<int, array{title: string, level: int, html: string, word_count: int}> $sections
+     * @param Faq[] $faqs
      */
     private function assembleHtml(array $sections, array $faqs): string
     {
@@ -248,5 +195,28 @@ class ContentEngine
         $global = trim((string) $this->settings->get('rjs_preferred_llm_provider', ''));
 
         return $global !== '' ? $global : null;
+    }
+
+    private function resolveToneInstructions(?string $override): string
+    {
+        if ($override !== null && TonePresets::isValid($override)) {
+            return TonePresets::instructionsFor($override);
+        }
+
+        $global = (string) $this->settings->get('rjs_content_tone', TonePresets::defaultPreset());
+
+        return TonePresets::instructionsFor($global);
+    }
+
+    /**
+     * Approximate output token ceiling for the single consolidated call:
+     * ~2.2 tokens/word covers the article body itself plus the JSON
+     * structure/FAQ/heading overhead, with a floor for very short targets
+     * and a cap so a misconfigured word count can't request an unbounded
+     * (and unboundedly expensive) response.
+     */
+    private function resolveMaxTokens(int $wordCount): int
+    {
+        return min(16000, max(4096, (int) round($wordCount * 2.2)));
     }
 }

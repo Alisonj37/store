@@ -98,7 +98,8 @@ class JobRegistry
             $source,
             $researchData,
             $this->articleOverride($article->assigned_llm ?? null),
-            $this->articleOverride($article->assigned_llm_model ?? null)
+            $this->articleOverride($article->assigned_llm_model ?? null),
+            $this->articleOverride($article->assigned_tone ?? null)
         );
 
         $relatedArticles = $this->articles->findRelatedPublished($job->getArticleId(), $article->category_name ?? null);

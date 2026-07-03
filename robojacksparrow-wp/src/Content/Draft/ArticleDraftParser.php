@@ -2,49 +2,47 @@
 
 declare(strict_types=1);
 
-namespace RoboJackSparrow\Content\Outline;
+namespace RoboJackSparrow\Content\Draft;
 
 use RoboJackSparrow\Content\ContentException;
-use RoboJackSparrow\Content\Dto\Outline;
+use RoboJackSparrow\Content\Dto\Faq;
 use RoboJackSparrow\Content\JsonResponseParser;
 
-class OutlineGenerator
+/**
+ * Parses the single consolidated LLM response (title, sections already
+ * containing their own HTML body, FAQs, focus keywords, image prompt) into
+ * an ArticleDraft. Replaces the old separate outline-parsing + per-section
+ * generation + FAQ-parsing steps now that all of it comes back from one
+ * LLM call - see ContentEngine.
+ */
+class ArticleDraftParser
 {
     /**
-     * Parses the LLM's outline-generation JSON response into an Outline DTO.
-     * Expected shape:
-     *   {
-     *     "title": "...",
-     *     "meta_description": "...",
-     *     "sections": [{"title": "...", "level": 2}, ...],
-     *     "focus_keywords": ["...", ...],
-     *     "image_prompt": "..."
-     *   }
-     *
-     * @throws ContentException When the response cannot be parsed into a usable outline.
+     * @throws ContentException When the response cannot be parsed into a usable draft.
      */
-    public function parse(string $rawResponse): Outline
+    public function parse(string $rawResponse): ArticleDraft
     {
         $data = JsonResponseParser::decode($rawResponse);
 
         if ($data === null) {
-            throw new ContentException('Could not parse outline JSON from LLM response');
+            throw new ContentException('Could not parse article JSON from LLM response');
         }
 
         $title = trim((string) ($data['title'] ?? ''));
         if ($title === '') {
-            throw new ContentException('LLM outline response is missing a title');
+            throw new ContentException('LLM article response is missing a title');
         }
 
         $sections = $this->parseSections((array) ($data['sections'] ?? []));
         if ($sections === []) {
-            throw new ContentException('LLM outline response has no valid sections');
+            throw new ContentException('LLM article response has no valid sections');
         }
 
-        return new Outline(
+        return new ArticleDraft(
             title: $title,
             metaDescription: trim((string) ($data['meta_description'] ?? '')),
             sections: $sections,
+            faqs: $this->parseFaqs((array) ($data['faqs'] ?? [])),
             focusKeywords: $this->parseFocusKeywords((array) ($data['focus_keywords'] ?? [])),
             imagePrompt: isset($data['image_prompt']) && trim((string) $data['image_prompt']) !== ''
                 ? trim((string) $data['image_prompt'])
@@ -53,7 +51,7 @@ class OutlineGenerator
     }
 
     /**
-     * @return array<int, array{title: string, level: int}>
+     * @return array<int, array{title: string, level: int, html: string}>
      */
     private function parseSections(array $rawSections): array
     {
@@ -65,7 +63,9 @@ class OutlineGenerator
             }
 
             $sectionTitle = trim((string) ($section['title'] ?? ''));
-            if ($sectionTitle === '') {
+            $html = trim((string) ($section['html'] ?? ''));
+
+            if ($sectionTitle === '' || $html === '') {
                 continue;
             }
 
@@ -74,10 +74,36 @@ class OutlineGenerator
                 // H1 is reserved for the post title itself, so section
                 // headings are clamped to H2-H6.
                 'level' => max(2, min(6, (int) ($section['level'] ?? 2))),
+                'html'  => $html,
             ];
         }
 
         return $sections;
+    }
+
+    /**
+     * @return Faq[]
+     */
+    private function parseFaqs(array $rawFaqs): array
+    {
+        $faqs = [];
+
+        foreach ($rawFaqs as $item) {
+            if (!is_array($item)) {
+                continue;
+            }
+
+            $question = trim((string) ($item['question'] ?? ''));
+            $answer = trim((string) ($item['answer'] ?? ''));
+
+            if ($question === '' || $answer === '') {
+                continue;
+            }
+
+            $faqs[] = new Faq($question, $answer);
+        }
+
+        return $faqs;
     }
 
     /**

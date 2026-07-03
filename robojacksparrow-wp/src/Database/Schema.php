@@ -46,7 +46,6 @@ class Schema
             $prefix . 'queue',
             $prefix . 'logs',
             $prefix . 'settings',
-            $prefix . 'memory',
             $prefix . 'llm_health',
             $prefix . 'sources',
         ];
@@ -64,14 +63,13 @@ class Schema
      */
     private static function definitions(string $charsetCollate): array
     {
-        [$articles, $queue, $logs, $settings, $memory, $llmHealth, $sources] = self::tableNames();
+        [$articles, $queue, $logs, $settings, $llmHealth, $sources] = self::tableNames();
 
         return [
             self::articlesTable($articles, $charsetCollate),
             self::queueTable($queue, $charsetCollate),
             self::logsTable($logs, $charsetCollate),
             self::settingsTable($settings, $charsetCollate),
-            self::memoryTable($memory, $charsetCollate),
             self::llmHealthTable($llmHealth, $charsetCollate),
             self::sourcesTable($sources, $charsetCollate),
         ];
@@ -97,6 +95,7 @@ class Schema
             assigned_scraper       VARCHAR(20) NOT NULL DEFAULT 'auto',
             assigned_llm           VARCHAR(20) NOT NULL DEFAULT 'auto',
             assigned_llm_model     VARCHAR(100) NULL,
+            assigned_tone          VARCHAR(20) NULL,
             assigned_image_source  VARCHAR(20) NOT NULL DEFAULT 'auto',
             image_prompt           LONGTEXT NULL,
             featured_image_id      BIGINT UNSIGNED NULL,
@@ -209,25 +208,6 @@ class Schema
             PRIMARY KEY  (id),
             UNIQUE KEY uk_setting_key (setting_key),
             KEY idx_setting_type (setting_type)
-        ) ENGINE=InnoDB {$charsetCollate};";
-    }
-
-    /**
-     * Memoria de contexto do agente (janela deslizante entre secoes/sessoes).
-     */
-    private static function memoryTable(string $table, string $charsetCollate): string
-    {
-        return "CREATE TABLE {$table} (
-            id                  BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-            memory_key          VARCHAR(100) NOT NULL,
-            role                VARCHAR(20) NOT NULL,
-            content             LONGTEXT NOT NULL,
-            tokens              SMALLINT UNSIGNED NOT NULL DEFAULT 0,
-            metadata            JSON NULL,
-            created_at          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            PRIMARY KEY  (id),
-            KEY idx_memory_key (memory_key),
-            KEY idx_created_at (created_at)
         ) ENGINE=InnoDB {$charsetCollate};";
     }
 

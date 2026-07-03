@@ -10,11 +10,8 @@ use RoboJackSparrow\Ai\Dto\LLMResponse;
 use RoboJackSparrow\Ai\HealthMonitor;
 use RoboJackSparrow\Ai\LLMException;
 use RoboJackSparrow\Ai\LLMRouter;
-use RoboJackSparrow\Ai\Memory\MemoryBuffer;
-use RoboJackSparrow\Ai\Memory\MemoryStore;
 use RoboJackSparrow\Content\ContentEngine;
-use RoboJackSparrow\Content\Faq\FaqExtractor;
-use RoboJackSparrow\Content\Outline\OutlineGenerator;
+use RoboJackSparrow\Content\Draft\ArticleDraftParser;
 use RoboJackSparrow\Content\Prompts\PromptLibrary;
 use RoboJackSparrow\Content\Seo\SeoGenerator;
 use RoboJackSparrow\Core\Encryption;
@@ -27,25 +24,21 @@ use RoboJackSparrow\Tests\TestCase;
 
 final class ContentEngineTest extends TestCase
 {
-    private function makeEngine(ScriptedProvider $provider): ContentEngine
+    private function makeEngine(ScriptedProvider $provider, ?SettingRepository $settings = null): ContentEngine
     {
         $llm = new LLMRouter(['test' => $provider], new HealthMonitor(), new Logger());
-        $prompts = new PromptLibrary();
-        $memory = new MemoryBuffer(new MemoryStore());
 
         return new ContentEngine(
             $llm,
-            $memory,
             new SeoGenerator(),
-            new FaqExtractor($llm, $prompts),
-            new OutlineGenerator(),
-            $prompts,
-            new SettingRepository(new Encryption(), new Logger()),
+            new ArticleDraftParser(),
+            new PromptLibrary(),
+            $settings ?? new SettingRepository(new Encryption(), new Logger()),
             new Logger()
         );
     }
 
-    public function testFullPipelineProducesTitleSectionsFaqAndSeo(): void
+    public function testSingleCallProducesTitleSectionsFaqAndSeo(): void
     {
         $provider = new ScriptedProvider();
         $engine = $this->makeEngine($provider);
@@ -74,11 +67,14 @@ final class ContentEngineTest extends TestCase
         $this->assertStringContainsString('<h2>Perguntas Frequentes</h2>', $result->getHtmlContent());
         $this->assertSame('FAQPage', $result->getSchemaFaq()['@type']);
         $this->assertSame(['palavra-chave-1', 'palavra-chave-2'], $result->getFocusKeywords());
-        $this->assertSame(1050, $result->getTokensUsed(), 'outline(500) + 2 sections(200 each) + faq(150) = 1050');
+        $this->assertSame(500, $result->getTokensUsed(), 'a single LLM call now produces the whole article');
 
-        // Proves the Tavily briefing is actually injected into the prompts.
+        // Exactly one LLM call for the whole article - the whole point of
+        // the single-call rewrite.
+        $this->assertCount(1, $provider->prompts);
+
+        // Proves the Tavily briefing is actually injected into the prompt.
         $this->assertStringContainsString('Resposta verificada ABC sobre o lancamento do robo.', $provider->prompts[0]);
-        $this->assertStringContainsString('Resposta verificada ABC sobre o lancamento do robo.', $provider->prompts[1]);
 
         // External citations from the research sources (AEO/GEO: answer
         // engines weigh cited, checkable sources).
@@ -86,7 +82,7 @@ final class ContentEngineTest extends TestCase
         $this->assertStringContainsString('<a href="https://example.com/fonte" target="_blank" rel="noopener noreferrer">Fonte Exemplo Verificada</a>', $result->getHtmlContent());
     }
 
-    public function testModelOverrideReachesEveryLlmRequestInThePipeline(): void
+    public function testModelOverrideReachesTheLlmRequest(): void
     {
         $provider = new ScriptedProvider();
         $engine = $this->makeEngine($provider);
@@ -96,11 +92,7 @@ final class ContentEngineTest extends TestCase
 
         $engine->generate(1, $source, $research, null, 'gpt-4o-mini');
 
-        // Outline, both sections, and the FAQ call must all carry the override.
-        $this->assertNotEmpty($provider->requestedModels);
-        foreach ($provider->requestedModels as $model) {
-            $this->assertSame('gpt-4o-mini', $model);
-        }
+        $this->assertSame(['gpt-4o-mini'], $provider->requestedModels);
     }
 
     public function testBlankModelOverrideLeavesModelResolutionToTheProvider(): void
@@ -113,9 +105,63 @@ final class ContentEngineTest extends TestCase
 
         $engine->generate(1, $source, $research, null, '   ');
 
-        foreach ($provider->requestedModels as $model) {
-            $this->assertNull($model, 'a blank override must not be forwarded as a literal model string');
-        }
+        $this->assertSame([null], $provider->requestedModels, 'a blank override must not be forwarded as a literal model string');
+    }
+
+    public function testToneOverrideChangesThePromptInstructions(): void
+    {
+        $provider = new ScriptedProvider();
+        $engine = $this->makeEngine($provider);
+
+        $source = new ScrapedContent(url: 'x', title: 'X', text: 'text', html: null);
+        $research = new ResearchData(facts: [], sources: [], answer: null, entities: [], fromFallback: true);
+
+        $engine->generate(1, $source, $research, null, null, 'afiliado');
+
+        $this->assertStringContainsString('persuasivo', $provider->prompts[0]);
+        $this->assertStringContainsString('chamada para acao', $provider->prompts[0]);
+    }
+
+    public function testGlobalToneSettingIsUsedWhenNoOverrideGiven(): void
+    {
+        $provider = new ScriptedProvider();
+        $settings = new SettingRepository(new Encryption(), new Logger());
+        $settings->set('rjs_content_tone', 'noticia');
+        $engine = $this->makeEngine($provider, $settings);
+
+        $source = new ScrapedContent(url: 'x', title: 'X', text: 'text', html: null);
+        $research = new ResearchData(facts: [], sources: [], answer: null, entities: [], fromFallback: true);
+
+        $engine->generate(1, $source, $research);
+
+        $this->assertStringContainsString('jornalistico', $provider->prompts[0]);
+    }
+
+    public function testUnknownToneOverrideFallsBackToGlobalDefault(): void
+    {
+        $provider = new ScriptedProvider();
+        $engine = $this->makeEngine($provider);
+
+        $source = new ScrapedContent(url: 'x', title: 'X', text: 'text', html: null);
+        $research = new ResearchData(facts: [], sources: [], answer: null, entities: [], fromFallback: true);
+
+        $engine->generate(1, $source, $research, null, null, 'not-a-real-preset');
+
+        $this->assertStringContainsString('equilibrado', $provider->prompts[0]);
+    }
+
+    public function testPromptInstructsOriginalityNotCopying(): void
+    {
+        $provider = new ScriptedProvider();
+        $engine = $this->makeEngine($provider);
+
+        $source = new ScrapedContent(url: 'x', title: 'X', text: 'text', html: null);
+        $research = new ResearchData(facts: [], sources: [], answer: null, entities: [], fromFallback: true);
+
+        $engine->generate(1, $source, $research);
+
+        $this->assertStringContainsString('ORIGINALIDADE', $provider->prompts[0]);
+        $this->assertStringContainsString('nunca copie', mb_strtolower($provider->prompts[0]));
     }
 
     public function testNoSourcesBlockIsAddedWhenResearchHasNoSources(): void
@@ -144,24 +190,6 @@ final class ContentEngineTest extends TestCase
         $this->assertSame('Titulo Gerado de Teste', $result->getTitle());
         $this->assertStringContainsString('Nenhuma pesquisa adicional disponivel', $provider->prompts[0]);
     }
-
-    public function testMemoryIsIsolatedPerArticle(): void
-    {
-        $store = new MemoryStore();
-        $llm = new LLMRouter(['test' => new ScriptedProvider()], new HealthMonitor(), new Logger());
-        $prompts = new PromptLibrary();
-        $engine = new ContentEngine($llm, new MemoryBuffer($store), new SeoGenerator(), new FaqExtractor($llm, $prompts), new OutlineGenerator(), $prompts, new SettingRepository(new Encryption(), new Logger()), new Logger());
-
-        $source = new ScrapedContent(url: 'x', title: 'X', text: 'text', html: null);
-        $research = new ResearchData([], [], null, [], true);
-
-        $engine->generate(1, $source, $research);
-        $engine->generate(2, $source, $research);
-
-        // 2 sections x (user, assistant) pair each = 4 entries per article.
-        $this->assertCount(4, $store->getAll('article_1'));
-        $this->assertCount(4, $store->getAll('article_2'));
-    }
 }
 
 final class ScriptedProvider implements LLMProviderInterface
@@ -183,14 +211,18 @@ final class ScriptedProvider implements LLMProviderInterface
         $this->prompts[] = $prompt;
         $this->requestedModels[] = $request->getModel();
 
-        if (str_contains($prompt, 'Crie a estrutura de um artigo original')) {
+        if (str_contains($prompt, 'Escreva um artigo ORIGINAL')) {
             return new LLMResponse(
                 content: json_encode([
                     'title'            => 'Titulo Gerado de Teste',
                     'meta_description' => 'Uma meta descricao de teste bem curta.',
                     'sections'         => [
-                        ['title' => 'Introducao', 'level' => 2],
-                        ['title' => 'Detalhes Tecnicos', 'level' => 2],
+                        ['title' => 'Introducao', 'level' => 2, 'html' => '<p>Paragrafo de introducao gerado para teste.</p>'],
+                        ['title' => 'Detalhes Tecnicos', 'level' => 2, 'html' => '<p>Paragrafo tecnico gerado para teste.</p>'],
+                    ],
+                    'faqs'             => [
+                        ['question' => 'O que e isso?', 'answer' => 'Isso e um teste.'],
+                        ['question' => 'Como funciona?', 'answer' => 'Funciona bem.'],
                     ],
                     'focus_keywords'   => ['palavra-chave-1', 'palavra-chave-2'],
                     'image_prompt'     => 'a friendly robot writing an article',
@@ -198,25 +230,6 @@ final class ScriptedProvider implements LLMProviderInterface
                 tokensUsed: 500,
                 promptTokens: 400,
                 completionTokens: 100,
-                model: 'test-model',
-                finishReason: 'stop',
-                rawResponse: []
-            );
-        }
-
-        if (str_contains($prompt, 'Voce esta escrevendo a secao')) {
-            return new LLMResponse('<p>Paragrafo gerado para a secao de teste.</p>', 200, 150, 50, 'test-model', 'stop', []);
-        }
-
-        if (str_contains($prompt, 'extraia de 3 a 6 perguntas')) {
-            return new LLMResponse(
-                content: json_encode([
-                    ['question' => 'O que e isso?', 'answer' => 'Isso e um teste.'],
-                    ['question' => 'Como funciona?', 'answer' => 'Funciona bem.'],
-                ]),
-                tokensUsed: 150,
-                promptTokens: 120,
-                completionTokens: 30,
                 model: 'test-model',
                 finishReason: 'stop',
                 rawResponse: []

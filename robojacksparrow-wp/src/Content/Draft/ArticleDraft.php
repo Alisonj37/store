@@ -2,20 +2,24 @@
 
 declare(strict_types=1);
 
-namespace RoboJackSparrow\Content\Dto;
+namespace RoboJackSparrow\Content\Draft;
 
-final class Outline
+use RoboJackSparrow\Content\Dto\Faq;
+
+final class ArticleDraft
 {
     /**
-     * @param array<int, array{title: string, level: int}> $sections
+     * @param array<int, array{title: string, level: int, html: string}> $sections
+     * @param Faq[] $faqs
      * @param string[] $focusKeywords
      */
     public function __construct(
         private string $title,
         private string $metaDescription,
         private array $sections,
+        private array $faqs,
         private array $focusKeywords,
-        private ?string $imagePrompt = null
+        private ?string $imagePrompt
     ) {
     }
 
@@ -30,11 +34,19 @@ final class Outline
     }
 
     /**
-     * @return array<int, array{title: string, level: int}>
+     * @return array<int, array{title: string, level: int, html: string}>
      */
     public function getSections(): array
     {
         return $this->sections;
+    }
+
+    /**
+     * @return Faq[]
+     */
+    public function getFaqs(): array
+    {
+        return $this->faqs;
     }
 
     /**
@@ -48,21 +60,5 @@ final class Outline
     public function getImagePrompt(): ?string
     {
         return $this->imagePrompt;
-    }
-
-    /**
-     * Renders the outline as a Markdown-style heading list, used as context
-     * in the section-generation prompt so the LLM knows the full structure.
-     */
-    public function toString(): string
-    {
-        $lines = [];
-
-        foreach ($this->sections as $section) {
-            $level = max(1, (int) $section['level']);
-            $lines[] = str_repeat('#', $level) . ' ' . $section['title'];
-        }
-
-        return implode("\n", $lines);
     }
 }

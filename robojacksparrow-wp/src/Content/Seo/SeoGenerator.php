@@ -4,35 +4,33 @@ declare(strict_types=1);
 
 namespace RoboJackSparrow\Content\Seo;
 
-use RoboJackSparrow\Content\Dto\Outline;
 use RoboJackSparrow\Content\Dto\SeoData;
 
 /**
- * Assembles SEO title/description and Article schema.org JSON-LD from
- * already-generated outline/content data. No extra LLM call is made here:
- * the meta title/description and focus keywords already come out of the
- * outline-generation step.
+ * Assembles SEO title/description and Article schema.org JSON-LD. No extra
+ * LLM call is made here: the meta title/description already come out of
+ * the article-generation step (see ContentEngine/ArticleDraftParser).
  */
 class SeoGenerator
 {
     private const MAX_TITLE_LENGTH = 60;
     private const MAX_DESCRIPTION_LENGTH = 160;
 
-    public function generate(Outline $outline, string $htmlContent): SeoData
+    public function generate(string $title, string $metaDescription, string $htmlContent): SeoData
     {
-        $title = $this->truncate($outline->getTitle(), self::MAX_TITLE_LENGTH);
-        $description = $this->buildDescription($outline, $htmlContent);
+        $seoTitle = $this->truncate($title, self::MAX_TITLE_LENGTH);
+        $description = $this->buildDescription($metaDescription, $htmlContent);
 
         return new SeoData(
-            title: $title,
+            title: $seoTitle,
             description: $description,
-            articleSchema: $this->buildArticleSchema($title, $description)
+            articleSchema: $this->buildArticleSchema($seoTitle, $description)
         );
     }
 
-    private function buildDescription(Outline $outline, string $htmlContent): string
+    private function buildDescription(string $metaDescription, string $htmlContent): string
     {
-        $metaDescription = trim($outline->getMetaDescription());
+        $metaDescription = trim($metaDescription);
         if ($metaDescription !== '') {
             return $this->truncate($metaDescription, self::MAX_DESCRIPTION_LENGTH);
         }

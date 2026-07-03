@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace RoboJackSparrow\Admin\Menu;
 
+use RoboJackSparrow\Content\Tone\TonePresets;
 use RoboJackSparrow\Database\Repositories\ArticleRepository;
 use RoboJackSparrow\Queue\QueueManager;
 use RoboJackSparrow\Queue\Worker;
@@ -90,6 +91,7 @@ class GenerateArticlePage
         $html .= $this->renderCategorySelect();
         $html .= $this->renderSelect('assigned_llm', 'Provedor de IA (texto)', self::LLM_PROVIDERS);
         $html .= $this->renderModelField();
+        $html .= $this->renderToneSelect();
         $html .= $this->renderSelect('assigned_image_source', 'Provedor de imagem', self::IMAGE_PROVIDERS);
         $html .= $this->renderSelect('publish_mode', 'Publicacao', self::PUBLISH_MODES);
         $html .= '<p><label>Agendar para (usado somente se "Agendar" estiver selecionado)<br>';
@@ -133,6 +135,11 @@ class GenerateArticlePage
             . '</label></p>';
     }
 
+    private function renderToneSelect(): string
+    {
+        return $this->renderSelect('assigned_tone', 'Tom de voz (por nicho)', ['' => 'Usar o padrao do site'] + TonePresets::choices());
+    }
+
     /**
      * @param array<string, string> $choices
      */
@@ -173,6 +180,8 @@ class GenerateArticlePage
 
         $assignedLlm = $this->pickChoice((string) ($_POST['assigned_llm'] ?? ''), self::LLM_PROVIDERS);
         $assignedLlmModel = trim(sanitize_text_field((string) ($_POST['assigned_llm_model'] ?? '')));
+        $assignedTone = (string) ($_POST['assigned_tone'] ?? '');
+        $assignedTone = TonePresets::isValid($assignedTone) ? $assignedTone : '';
         $assignedImage = $this->pickChoice((string) ($_POST['assigned_image_source'] ?? ''), self::IMAGE_PROVIDERS);
         $publishMode = $this->pickChoice((string) ($_POST['publish_mode'] ?? 'publish'), self::PUBLISH_MODES, 'publish');
 
@@ -192,6 +201,7 @@ class GenerateArticlePage
             'category_name'        => $categoryName,
             'assigned_llm'         => $assignedLlm === '' ? 'auto' : $assignedLlm,
             'assigned_llm_model'   => $assignedLlmModel !== '' ? $assignedLlmModel : null,
+            'assigned_tone'        => $assignedTone !== '' ? $assignedTone : null,
             'assigned_image_source' => $assignedImage === '' ? 'auto' : $assignedImage,
             'target_post_status'   => $publishMode,
             'scheduled_at'         => $scheduledAt,

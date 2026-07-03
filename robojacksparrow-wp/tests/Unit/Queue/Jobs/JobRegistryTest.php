@@ -10,11 +10,8 @@ use RoboJackSparrow\Ai\Dto\LLMResponse;
 use RoboJackSparrow\Ai\HealthMonitor;
 use RoboJackSparrow\Ai\LLMException;
 use RoboJackSparrow\Ai\LLMRouter;
-use RoboJackSparrow\Ai\Memory\MemoryBuffer;
-use RoboJackSparrow\Ai\Memory\MemoryStore;
 use RoboJackSparrow\Content\ContentEngine;
-use RoboJackSparrow\Content\Faq\FaqExtractor;
-use RoboJackSparrow\Content\Outline\OutlineGenerator;
+use RoboJackSparrow\Content\Draft\ArticleDraftParser;
 use RoboJackSparrow\Content\Prompts\PromptLibrary;
 use RoboJackSparrow\Content\Seo\SeoGenerator;
 use RoboJackSparrow\Core\Encryption;
@@ -51,6 +48,11 @@ use RoboJackSparrow\Tests\TestCase;
  */
 final class JobRegistryTest extends TestCase
 {
+    private function makeContentEngine(LLMRouter $llmRouter, SettingRepository $settings, Logger $logger): ContentEngine
+    {
+        return new ContentEngine($llmRouter, new SeoGenerator(), new ArticleDraftParser(), new PromptLibrary(), $settings, $logger);
+    }
+
     public function testFullChainScrapeToPublishRunsEndToEnd(): void
     {
         $this->wpdb->articles[1] = [
@@ -72,17 +74,7 @@ final class JobRegistryTest extends TestCase
 
         $llmProvider = new FakeLlmProvider();
         $llmRouter = new LLMRouter(['test' => $llmProvider], new HealthMonitor(), $logger);
-        $prompts = new PromptLibrary();
-        $content = new ContentEngine(
-            $llmRouter,
-            new MemoryBuffer(new MemoryStore()),
-            new SeoGenerator(),
-            new FaqExtractor($llmRouter, $prompts),
-            new OutlineGenerator(),
-            $prompts,
-            $settings,
-            $logger
-        );
+        $content = $this->makeContentEngine($llmRouter, $settings, $logger);
 
         $image = new ImageEngine([new FakeImageProvider()], $logger);
 
@@ -143,17 +135,7 @@ final class JobRegistryTest extends TestCase
         $decoyLlm = new RefusingLlmProvider('decoy-llm');
         $preferredLlm = new FakeLlmProvider('preferred-llm');
         $llmRouter = new LLMRouter(['decoy-llm' => $decoyLlm, 'preferred-llm' => $preferredLlm], new HealthMonitor(), $logger);
-        $prompts = new PromptLibrary();
-        $content = new ContentEngine(
-            $llmRouter,
-            new MemoryBuffer(new MemoryStore()),
-            new SeoGenerator(),
-            new FaqExtractor($llmRouter, $prompts),
-            new OutlineGenerator(),
-            $prompts,
-            $settings,
-            $logger
-        );
+        $content = $this->makeContentEngine($llmRouter, $settings, $logger);
 
         $decoyImage = new RefusingImageProvider('decoy-image');
         $preferredImage = new FakeImageProvider('preferred-image');
@@ -198,9 +180,8 @@ final class JobRegistryTest extends TestCase
         $articles = new ArticleRepository();
         $logger = new Logger();
         $settings = new SettingRepository(new Encryption(), $logger);
-        $prompts = new PromptLibrary();
         $llmRouter = new LLMRouter(['test' => new FakeLlmProvider()], new HealthMonitor(), $logger);
-        $content = new ContentEngine($llmRouter, new MemoryBuffer(new MemoryStore()), new SeoGenerator(), new FaqExtractor($llmRouter, $prompts), new OutlineGenerator(), $prompts, $settings, $logger);
+        $content = $this->makeContentEngine($llmRouter, $settings, $logger);
 
         $registry = new JobRegistry(
             $articles,
@@ -228,7 +209,6 @@ final class JobRegistryTest extends TestCase
     {
         $logger = new Logger();
         $settings = new SettingRepository(new Encryption(), $logger);
-        $prompts = new PromptLibrary();
         $llmRouter = new LLMRouter([], new HealthMonitor(), $logger);
 
         return new JobRegistry(
@@ -236,7 +216,7 @@ final class JobRegistryTest extends TestCase
             new QueueManager($logger),
             new ScraperEngine([], $logger),
             new ResearchEngine(null, $logger),
-            new ContentEngine($llmRouter, new MemoryBuffer(new MemoryStore()), new SeoGenerator(), new FaqExtractor($llmRouter, $prompts), new OutlineGenerator(), $prompts, $settings, $logger),
+            $this->makeContentEngine($llmRouter, $settings, $logger),
             new ImageEngine([], $logger),
             new PostPublisher(new TaxonomyManager(), new MediaUploader(), new SeoIntegrator(), $logger),
             $logger
@@ -327,7 +307,6 @@ final class JobRegistryTest extends TestCase
         $queue = new QueueManager(new Logger());
         $logger = new Logger();
         $settings = new SettingRepository(new Encryption(), $logger);
-        $prompts = new PromptLibrary();
         $llmRouter = new LLMRouter([], new HealthMonitor(), $logger);
 
         $registry = new JobRegistry(
@@ -335,7 +314,7 @@ final class JobRegistryTest extends TestCase
             $queue,
             new ScraperEngine([], $logger),
             new ResearchEngine(null, $logger),
-            new ContentEngine($llmRouter, new MemoryBuffer(new MemoryStore()), new SeoGenerator(), new FaqExtractor($llmRouter, $prompts), new OutlineGenerator(), $prompts, $settings, $logger),
+            $this->makeContentEngine($llmRouter, $settings, $logger),
             new ImageEngine([], $logger),
             new PostPublisher(new TaxonomyManager(), new MediaUploader(), new SeoIntegrator(), $logger),
             $logger
@@ -385,22 +364,15 @@ final class FakeLlmProvider implements LLMProviderInterface
         $this->requestedModels[] = $request->getModel();
         $prompt = $request->getPrompt();
 
-        if (str_contains($prompt, 'Crie a estrutura de um artigo original')) {
+        if (str_contains($prompt, 'Escreva um artigo ORIGINAL')) {
             return new LLMResponse(json_encode([
                 'title'            => 'Titulo Gerado',
                 'meta_description' => 'Descricao gerada.',
-                'sections'         => [['title' => 'Introducao', 'level' => 2]],
+                'sections'         => [['title' => 'Introducao', 'level' => 2, 'html' => '<p>Conteudo gerado para a secao.</p>']],
+                'faqs'             => [],
                 'focus_keywords'   => ['robo'],
                 'image_prompt'     => 'a robot',
             ]), 100, 80, 20, 'test-model', 'stop', []);
-        }
-
-        if (str_contains($prompt, 'Voce esta escrevendo a secao')) {
-            return new LLMResponse('<p>Conteudo gerado para a secao.</p>', 50, 30, 20, 'test-model', 'stop', []);
-        }
-
-        if (str_contains($prompt, 'extraia de 3 a 6 perguntas')) {
-            return new LLMResponse(json_encode([]), 10, 5, 5, 'test-model', 'stop', []);
         }
 
         throw new LLMException('Unexpected prompt: ' . substr($prompt, 0, 60));

@@ -14,63 +14,42 @@ final class PromptLibrary
 {
     private const TEMPLATES = [
 
-        'outline_generation' => <<<'PROMPT'
-Voce e um editor de conteudo SEO senior escrevendo em {{language}}, com tom {{tone}}.
+        'article_generation' => <<<'PROMPT'
+Voce e um redator de conteudo SEO senior escrevendo em {{language}}.
 
-Fonte original:
+Tom de voz para este artigo: {{tone_instructions}}
+
+REGRA MAIS IMPORTANTE - ORIGINALIDADE: o artigo tem que ser 100% original, escrito inteiramente com suas
+proprias palavras e sua propria estrutura de frases. A fonte abaixo e APENAS uma referencia factual/tematica -
+nunca copie ou parafraseie frases dela quase literalmente, nunca reutilize a mesma ordem de paragrafos ou
+frases da fonte. Escreva como se estivesse relatando o mesmo assunto do zero, com seu proprio angulo.
+
+Fonte original (somente para referencia factual, NAO copiar trechos):
 Titulo: {{title}}
 Conteudo: {{content}}
 
 Pesquisa factual verificada (use para checar fatos e enriquecer o angulo, nao copie literalmente):
 {{research_briefing}}
 
-Crie a estrutura de um artigo original de aproximadamente {{word_count}} palavras, otimizado para SEO,
-baseado na fonte acima e reforcado pelos fatos verificados. Responda APENAS com um JSON valido, sem
-texto adicional e sem blocos de codigo markdown, no formato exato:
+Escreva um artigo ORIGINAL de aproximadamente {{word_count}} palavras, otimizado para SEO, organizado em
+secoes com subtitulos (H2 ou H3), cada uma com paragrafos <p> e listas <ul>/<ol> quando fizer sentido.
+Inclua tambem de 3 a 6 perguntas frequentes (FAQ) baseadas no conteudo do artigo que voce escreveu, com
+respostas curtas e diretas.
+
+Responda APENAS com um JSON valido, sem texto adicional e sem blocos de codigo markdown, no formato exato:
 
 {
   "title": "Titulo otimizado para SEO (ate 60 caracteres)",
   "meta_description": "Meta descricao (ate 160 caracteres)",
   "sections": [
-    {"title": "Titulo da secao", "level": 2}
+    {"title": "Titulo da secao", "level": 2, "html": "<p>Corpo HTML da secao, sem a tag de titulo</p>"}
+  ],
+  "faqs": [
+    {"question": "Pergunta?", "answer": "Resposta curta e direta."}
   ],
   "focus_keywords": ["palavra-chave 1", "palavra-chave 2"],
   "image_prompt": "Descricao curta em ingles para gerar a imagem de destaque"
 }
-PROMPT,
-
-        'section_generation' => <<<'PROMPT'
-Voce esta escrevendo a secao {{section_index}} de {{total_sections}} de um artigo.
-
-Estrutura completa do artigo:
-{{outline_context}}
-
-Secao atual a escrever: "{{section_title}}" (nivel H{{section_level}})
-
-Conteudo da fonte original (base factual):
-{{source_content}}
-
-Pesquisa factual verificada (fatos e fontes adicionais):
-{{research_briefing}}
-
-Escreva o corpo HTML desta secao (paragrafos <p>, listas <ul>/<ol> quando fizer sentido).
-NAO inclua a tag de titulo (<h{{section_level}}>) - ela sera adicionada automaticamente.
-NAO repita conteudo ja coberto nas secoes anteriores (veja o historico de contexto).
-Responda apenas com o HTML da secao, sem comentarios ou explicacoes adicionais.
-PROMPT,
-
-        'faq_extraction' => <<<'PROMPT'
-Com base no artigo abaixo, extraia de 3 a 6 perguntas frequentes (FAQ) que um leitor faria,
-com respostas curtas e diretas baseadas apenas no conteudo do artigo.
-
-Artigo:
-{{content}}
-
-Responda APENAS com um JSON valido, sem texto adicional e sem blocos de codigo markdown, no formato:
-
-[
-  {"question": "Pergunta?", "answer": "Resposta curta e direta."}
-]
 PROMPT,
 
     ];

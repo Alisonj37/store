@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace RoboJackSparrow\Admin\Menu;
 
+use RoboJackSparrow\Content\Tone\TonePresets;
 use RoboJackSparrow\Database\Repositories\SettingRepository;
 
 class SettingsPage
@@ -15,7 +16,6 @@ class SettingsPage
      */
     private const TEXT_OPTIONS = [
         'rjs_content_language'  => ['label' => 'Idioma do conteudo', 'default' => 'pt_BR'],
-        'rjs_content_tone'      => ['label' => 'Tom do conteudo', 'default' => 'professional'],
         'rjs_target_word_count' => ['label' => 'Tamanho alvo (palavras)', 'default' => '1500'],
     ];
 
@@ -105,6 +105,7 @@ class SettingsPage
         foreach (self::TEXT_OPTIONS as $key => $meta) {
             $html .= $this->renderText($key, $meta);
         }
+        $html .= $this->renderToneSelect();
 
         $html .= '<h2>Provedores Preferidos</h2>';
         $html .= $this->renderSelect('rjs_preferred_llm_provider', self::SELECT_OPTIONS['rjs_preferred_llm_provider']);
@@ -134,6 +135,27 @@ class SettingsPage
             esc_html($meta['label']),
             esc_attr($key),
             esc_attr((string) $value)
+        );
+    }
+
+    /**
+     * Tom de voz padrao do site, escolhido entre presets de nicho (afiliado,
+     * noticia, tecnologia, etc.) - ver TonePresets. Cada artigo pode
+     * sobrepor isso individualmente na pagina Gerar Artigo.
+     */
+    private function renderToneSelect(): string
+    {
+        $value = (string) $this->settings->get('rjs_content_tone', TonePresets::defaultPreset());
+
+        $options = '';
+        foreach (TonePresets::choices() as $choiceValue => $choiceLabel) {
+            $selected = $choiceValue === $value ? ' selected' : '';
+            $options .= sprintf('<option value="%s"%s>%s</option>', esc_attr($choiceValue), $selected, esc_html($choiceLabel));
+        }
+
+        return sprintf(
+            '<p><label>Tom de voz padrao (por nicho)<br><select name="rjs_content_tone">%s</select></label></p>',
+            $options
         );
     }
 
@@ -220,6 +242,11 @@ class SettingsPage
             }
 
             $this->settings->set($key, sanitize_text_field((string) $_POST[$key]));
+        }
+
+        $tone = (string) ($_POST['rjs_content_tone'] ?? '');
+        if (TonePresets::isValid($tone)) {
+            $this->settings->set('rjs_content_tone', $tone);
         }
 
         foreach (array_keys(self::MODEL_OPTIONS) as $key) {

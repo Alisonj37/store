@@ -10,17 +10,16 @@ use RoboJackSparrow\Tests\TestCase;
 
 final class SchemaTest extends TestCase
 {
-    public function testTableNamesReturnsExactlySevenPrefixedTables(): void
+    public function testTableNamesReturnsExactlySixPrefixedTables(): void
     {
         $tables = Schema::tableNames();
 
-        $this->assertCount(7, $tables);
+        $this->assertCount(6, $tables);
         $this->assertSame([
             'wp_rjs_articles',
             'wp_rjs_queue',
             'wp_rjs_logs',
             'wp_rjs_settings',
-            'wp_rjs_memory',
             'wp_rjs_llm_health',
             'wp_rjs_sources',
         ], $tables);
@@ -45,7 +44,7 @@ final class SchemaTest extends TestCase
 
     public static function tableIndexProvider(): array
     {
-        return array_map(static fn (int $i) => [$i], range(0, 6));
+        return array_map(static fn (int $i) => [$i], range(0, 5));
     }
 
     /**

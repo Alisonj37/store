@@ -196,6 +196,38 @@ final class AdminPagesTest extends TestCase
         $this->assertStringContainsString('value="claude-3-5-sonnet-20241022"', $html);
     }
 
+    public function testSettingsPageShowsToneSelectAndSavesIt(): void
+    {
+        $settings = new SettingRepository(new Encryption(), new Logger());
+        $html = (new SettingsPage($settings))->render();
+
+        $this->assertStringContainsString('name="rjs_content_tone"', $html);
+        $this->assertStringContainsString('value="afiliado"', $html);
+        $this->assertStringContainsString('value="noticia"', $html);
+
+        $_POST = [
+            'rjs_action' => 'save_settings',
+            'rjs_nonce'  => 'nonce-rjs_settings',
+            'rjs_content_tone' => 'afiliado',
+        ];
+        (new SettingsPage($settings))->render();
+
+        $this->assertSame('afiliado', $settings->get('rjs_content_tone'));
+    }
+
+    public function testSettingsPageRejectsUnknownTonePreset(): void
+    {
+        $settings = new SettingRepository(new Encryption(), new Logger());
+        $_POST = [
+            'rjs_action' => 'save_settings',
+            'rjs_nonce'  => 'nonce-rjs_settings',
+            'rjs_content_tone' => 'not-a-real-tone',
+        ];
+        (new SettingsPage($settings))->render();
+
+        $this->assertNull($settings->get('rjs_content_tone'));
+    }
+
     public function testSettingsPageSavesProviderPreferencesAndModel(): void
     {
         $settings = new SettingRepository(new Encryption(), new Logger());
@@ -420,6 +452,46 @@ final class AdminPagesTest extends TestCase
 
         $article = reset($this->wpdb->articles);
         $this->assertSame('gpt-4o-mini', $article['assigned_llm_model']);
+    }
+
+    public function testGenerateArticlePageSavesToneOverrideWhenProvided(): void
+    {
+        $articles = new ArticleRepository();
+        $queue = new QueueManager(new Logger());
+        $page = new GenerateArticlePage($articles, $queue);
+
+        $before = $page->render();
+        $this->assertStringContainsString('name="assigned_tone"', $before);
+        $this->assertStringContainsString('Usar o padrao do site', $before);
+
+        $_POST = [
+            'rjs_action' => 'generate_article',
+            'rjs_nonce'  => 'nonce-rjs_generate_article',
+            'source_url' => 'https://example.com/x',
+            'assigned_tone' => 'afiliado',
+        ];
+        $page->render();
+
+        $article = reset($this->wpdb->articles);
+        $this->assertSame('afiliado', $article['assigned_tone']);
+    }
+
+    public function testGenerateArticlePageIgnoresUnknownToneOverride(): void
+    {
+        $articles = new ArticleRepository();
+        $queue = new QueueManager(new Logger());
+        $page = new GenerateArticlePage($articles, $queue);
+
+        $_POST = [
+            'rjs_action' => 'generate_article',
+            'rjs_nonce'  => 'nonce-rjs_generate_article',
+            'source_url' => 'https://example.com/x',
+            'assigned_tone' => 'not-a-real-tone',
+        ];
+        $page->render();
+
+        $article = reset($this->wpdb->articles);
+        $this->assertNull($article['assigned_tone']);
     }
 
     public function testGenerateArticlePageRejectsEmptyUrl(): void
